@@ -228,6 +228,10 @@ let runAll
         path
 
     let pangram = "The quick brown fox jumps over the lazy dog."
+    let longText =
+        "The quick brown fox jumps over the lazy dog. " +
+        "Pack my box with five dozen liquor jugs. " +
+        "How vexingly quick daft zebras jump!"
     let hello   = "Hello, World! GlyphAura"
 
     let runScene (shape: ISdfShape) (text: string) (fontSize: float32) (mode: LayoutMode) (title: string) =
@@ -245,7 +249,7 @@ let runAll
 
     let p1 = write "circle_flow.svg"
                 (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                    pangram 14.0f Flow "Circle r=150 — Flow 14px")
+                    longText 12.0f Flow "Circle r=150 — Flow 12px (long text)")
 
     let p2 = write "circle_fit.svg"
                 (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
@@ -257,7 +261,7 @@ let runAll
 
     let p4 = write "triangle_flow.svg"
                 (runScene (Shapes.triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f)
-                    pangram 12.0f Flow "Triangle 300×200 — Flow 12px")
+                    longText 11.0f Flow "Triangle 300×200 — Flow 11px (long text)")
 
     let p5 = write "parallelogram_flow.svg"
                 (runScene (Shapes.parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f)

@@ -18,12 +18,16 @@ SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
 | Feature | Status |
 |---------|--------|
 | Big-endian binary reader — no copies, no boxing | ✅ |
-| `cmap` Format 4 (BMP) + Format 12 (full Unicode) | ✅ |
+| `cmap` Format 4 (BMP) + Format 12 (full Unicode incl. SMP) | ✅ |
+| UTF-16 surrogate pair decoding (emoji, SMP math, etc.) | ✅ |
 | `hmtx` — O(1) glyph metrics | ✅ |
 | Legacy `kern` table — O(log n) binary search | ✅ |
 | GPOS LookupType 2 class-based kerning — O(1) lookup | ✅ |
 | TR#29 grapheme cluster boundaries (ZWJ, emoji, Hangul) | ✅ |
 | Bidi stub — LTR/RTL run detection | ✅ |
+| Hebrew, Arabic, Greek, Cyrillic, Math, Symbols (BMP) | ✅ |
+| Emoji and Supplementary Plane characters (Format 12) | ✅ |
+| PUA / icon-font codepoints (graceful .notdef fallback) | ✅ |
 | SDF geometry: Circle, Diamond, Triangle, Parallelogram | ✅ |
 | Fused streaming layout — Mode A (Flow) + Mode B (Fit) | ✅ |
 | Word-boundary line breaking | ✅ |
@@ -31,6 +35,14 @@ SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
 | DrawList SoA output (WebGPU-compatible) | ✅ |
 | LRU shape cache with FNV-1a dirty-flag system | ✅ |
 | TextNode with hit-testing, caret & selection geometry | ✅ |
+
+> **Script support note:** GlyphAura resolves any Unicode codepoint to a glyph ID via cmap
+> (Format 4 for BMP, Format 12 for full Unicode). Complex scripts that require *glyph
+> substitution* (GSUB) — Arabic joining forms, Devanagari conjuncts, Latin ligatures — are
+> not yet substituted; the engine places logical-order glyphs without substitution.
+> RTL visual reordering (full Unicode Bidirectional Algorithm) is planned.
+> For icon fonts (Font Awesome, Material Symbols) that use Private Use Area codepoints,
+> the cmap lookup works transparently — the engine places whichever glyph the font maps.
 
 ---
 
@@ -115,11 +127,11 @@ High-fidelity raster renders that verify pixel-perfect glyph placement, baseline
 alignment and kerning.  The **green dashed lines** are baselines; the **blue
 polylines** are the SDF shape boundary; the **orange band** is the cap-height zone.
 
-| Circle — Flow 14 px | Circle — Fit (auto-size) |
+| Circle — Flow 12 px (long text) | Circle — Fit (auto-size) |
 |---|---|
 | ![circle_flow](demo/output/circle_flow.png) | ![circle_fit](demo/output/circle_fit.png) |
 
-| Diamond — Flow 12 px | Triangle — Flow 12 px |
+| Diamond — Flow 12 px | Triangle — Flow 11 px (long text) |
 |---|---|
 | ![diamond_flow](demo/output/diamond_flow.png) | ![triangle_flow](demo/output/triangle_flow.png) |
 
@@ -142,27 +154,25 @@ to verify that shape boundaries are smooth polylines (not staircase approximatio
 
 ### ASCII Rendering (terminal)
 
-The fixed ASCII art correctly places every glyph character *inside* the shape
-boundary `|`.  Previously a uniform-Y grid was used to draw the boundary, which
-caused a visual artefact where characters appeared outside the edge; the boundary
-is now anchored to each row's actual baseline Y from the layout engine.
+The ASCII art correctly places every glyph character *inside* the shape boundary `|`.
+The shape boundary is anchored to each row's actual baseline Y from the layout engine
+so glyphs never appear outside the edge.  All renders below were generated from the
+current code and reflect the corrected glyph-positioning algorithm.
 
-#### Circle — Flow mode (14 px)
+#### Circle — Flow mode (12 px, long text)
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 — The quick brown fox jumps over the lazy dog. (14px, Flow)  │
-└────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 42 / 44 source chars
-  Font size used : 14.0 px
-  Unique glyphs  : 29 (raster requests)
+  Glyphs placed  : 118 / 122 source chars
+  Font size used : 12.0 px
+  Unique glyphs  : 32 (raster requests)
   Overflow       : none
 
-                     T h e ·q u ic k ·b r o w n   |
-              ·f o x·j u   m p s· o v er·t  h e·l a z    |
-          y · d o                                            |
-         |                                                    |
-      |                                                          |
+                      T he ·q u ick ·b row  n    |
+                     |                            |
+                ·fo x·ju  m p s·o v er·t h el a z      |
+           y · d og.· Pa ck  · y · b ox ·wi thf i           |
+        v e ·d o zn· l i quor· j ugs .·  How · vex in          |
+      gl y· qui c k·daf t ·z ebra s  ·j                          |
     |                                                              |
    |                                                                |
   |                                                                  |
@@ -173,11 +183,8 @@ is now anchored to each row's actual baseline Y from the layout engine.
 #### Circle — Fit mode (auto font size)
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 (Fit) — Hello, World! GlyphAura (14px, Fit)                  │
-└────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 19 / 23 source chars
-  Font size used : 64.8 px   ← binary-searched to fill the circle
+  Font size used : 64.8 px   (binary-searched to fill the circle)
   Unique glyphs  : 15 (raster requests)
 
                      |                            |
@@ -192,45 +199,37 @@ is now anchored to each row's actual baseline Y from the layout engine.
 #### Diamond — Flow mode (12 px)
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│  Diamond 150×150 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
-└───────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 41 / 44 source chars
 
                                  T    |
                                  |     |
                              h e          |
                           · q uic k· bro  w  |
-                       n· fox· j  um ps ·o v    |
+                       n·f ox· j  um ps ·o v    |
                    e r· the ·l az y· d              |
                   |                                   |
               |                                          |
 ```
 
-#### Triangle — Flow mode (12 px)
+#### Triangle — Flow mode (11 px, long text)
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  Triangle 300×200 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
-└────────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 40 / 44 source chars
+  Glyphs placed  : 115 / 122 source chars
 
-                                 T    |
-                                 |     |
+                                  T  |
                                h e      |
-                            · q ui c       |
-                            |              |
-                          k ·b r o wn· f     |
-                       ox ·  j ump s ·o e r·    |
-                     the · laz y ·                |
+                             · qui c      |
+                           k·b r o wn·f     |
+                        ox · j ump s· over ·   |
+                      the ·la z y·dog .· Pa c    |
+                    k ·m ·  ox ·with ·fi ve ·      |
+                  oz en ·liqu or·j u g s.· How ·ve   |
+               x i g ly· quick ·d af t·zeb  ra          |
 ```
 
 #### Parallelogram — Flow mode (12 px, shear = 0.4)
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Parallelogram 250×180 shear=0.4 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
-└───────────────────────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 43 / 44 source chars
 
 |                                                      |
@@ -239,21 +238,26 @@ T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
   ·d o g                                                  |
 ```
 
+#### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
+
+```
+  Glyphs placed  : 34 / 35 source chars
+  Scripts        : Latin, Greek (αβγ), Math (∑∫≠), Symbols (☃♠), Hebrew (שלום), Emoji (😀)
+
+  Gyph Aura·Helo·αβγ·∑∫≠·☃♠·שלם·😀
+```
+
 #### TextNode Cache Demo
 
 ```
-┌───────────────────────┐
-│  TextNode Cache Demo  │
-└───────────────────────┘
-  First render  : 1568 µs  (17 glyphs)
-  Cached render :    0 µs  (17 glyphs, cache hit)   ← 7 800× speedup
-  After setText :  279 µs  (12 glyphs)
+  First render  : 2420 µs  (17 glyphs)
+  Cached render :    0 µs  (17 glyphs, cache hit)   ← instant on cache hit
+  After setText :  524 µs  (12 glyphs)
 ```
 
 ---
 
 ## Design Principles
-
 1. **Zero heap allocations on the hot path.** `ArrayPool<T>` for all temporary
    buffers. `ReadOnlyMemory<byte>` slices for all table data.
 
@@ -295,10 +299,10 @@ zero-copy transfer over the Wasm/JS boundary.
 # Build all (lib + tests + demo)
 dotnet build
 
-# Run tests
+# Run tests (175 tests across 11 modules)
 dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
-# Run demo
+# Run demo (regenerates demo/output/*.png and *.svg)
 dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 ```
 
@@ -313,4 +317,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome — please add tests.
 
 ## License
 
-[MIT](LICENSE) — Copyright © 2025 Glyph-Auro Contributors
+[MIT](LICENSE) — Copyright © 2025 GlyphAura Contributors

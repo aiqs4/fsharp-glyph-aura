@@ -15,7 +15,7 @@
       Parallelogram), and emits a WebGPU-ready DrawList.
     </Description>
     <PackageTags>fsharp;opentype;font;shaping;layout;sdf;wasm;webgpu;scenograph;typography</PackageTags>
-    <PackageProjectUrl>https://github.com/aiqs4/fsharp-glyph-auro</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/aiqs4/fsharp-glyph-aura</PackageProjectUrl>
     <PackageReleaseNotes>See CHANGELOG.md for release notes.</PackageReleaseNotes>
   </PropertyGroup>
 

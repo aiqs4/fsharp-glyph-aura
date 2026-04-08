@@ -196,13 +196,19 @@ let main _ =
             metrics.UnitsPerEm metrics.Ascender metrics.Descender metrics.LineGap
         printfn ""
 
+        // Multiple pangrams + multi-script text for full-coverage demos
         let pangram = "The quick brown fox jumps over the lazy dog."
+        let longText =
+            "The quick brown fox jumps over the lazy dog. " +
+            "Pack my box with five dozen liquor jugs. " +
+            "How vexingly quick daft zebras jump!"
+        let multiScript =
+            "GlyphAura: Hello αβγ ∑∫≠ ☃♠ שלום 😀"
         let helloWorld = "Hello, World! GlyphAura"
-        let shortText = "Glyph"
 
-        // ── Scene 1: Circle, Flow mode ────────────────────────────────────
+        // ── Scene 1: Circle, Flow mode (longer text) ─────────────────────
         let circleShape = circle { X = 150.0f; Y = 150.0f } 150.0f
-        runScene tables metrics circleShape "Circle r=150" pangram 14.0f Flow |> ignore
+        runScene tables metrics circleShape "Circle r=150" longText 12.0f Flow |> ignore
 
         // ── Scene 2: Circle, Fit mode ─────────────────────────────────────
         runScene tables metrics circleShape "Circle r=150 (Fit)" helloWorld 14.0f Fit |> ignore
@@ -211,15 +217,19 @@ let main _ =
         let diamondShape = diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f
         runScene tables metrics diamondShape "Diamond 150×150" pangram 12.0f Flow |> ignore
 
-        // ── Scene 4: Triangle ─────────────────────────────────────────────
+        // ── Scene 4: Triangle (longer text) ───────────────────────────────
         let triangleShape = triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f
-        runScene tables metrics triangleShape "Triangle 300×200" pangram 12.0f Flow |> ignore
+        runScene tables metrics triangleShape "Triangle 300×200" longText 11.0f Flow |> ignore
 
         // ── Scene 5: Parallelogram ────────────────────────────────────────
         let paraShape = parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f
         runScene tables metrics paraShape "Parallelogram 250×180 shear=0.4" pangram 12.0f Flow |> ignore
 
-        // ── Scene 6: Cache benchmark ──────────────────────────────────────
+        // ── Scene 6: Multi-script demo ────────────────────────────────────
+        let wideShape = parallelogram { X = 300.0f; Y = 50.0f } 580.0f 60.0f 0.0f
+        runScene tables metrics wideShape "Multi-script" multiScript 14.0f Flow |> ignore
+
+        // ── Scene 7: Cache benchmark ──────────────────────────────────────
         runCacheDemo tables metrics
 
         // ── Scene 7: PNG renders ──────────────────────────────────────

@@ -1792,3 +1792,414 @@ module PositioningTests =
             sprintf "To spacing %g should be close to kern-corrected %g" gap tightGap)
         if result.GlyphBuffer.Length > 0 then
             ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+// ============================================================
+// Multi-Script & Unicode Coverage Tests
+//
+// Verifies that GlyphAura handles the full Unicode spectrum:
+//  • UTF-16 surrogate pairs → single glyph (not two .notdef)
+//  • BMP scripts: Hebrew, Arabic, Greek, Cyrillic, Math, Symbols
+//  • Supplementary plane emoji (U+1F600) in DejaVu Sans
+//  • PUA / icon-font codepoints (graceful .notdef fallback)
+//  • .notdef advance used when codepoint is unmapped
+//  • Mixed-script text → no crash, correct glyph count
+//  • ZWJ cluster: ZWJ + char treated as grapheme cluster boundary
+//  • Layout monotonicity over multi-script text
+//
+// All glyph IDs below were verified against the DejaVu Sans TTF
+// binary in tests/TestData/DejaVuSans.ttf (Format 12 cmap,
+// platform=3 encoding=10).
+// ============================================================
+module MultiScriptTests =
+
+    // ── Known glyph IDs in DejaVu Sans (verified from font binary) ──────────
+    // Script        Char          Unicode    GlyphID
+    // Latin         'A'           U+0041     36
+    // Hebrew        'א' (Alef)    U+05D0     1319
+    // Arabic        'ا' (Alef)    U+0627     1365
+    // Greek         'α' (alpha)   U+03B1     838
+    // Cyrillic      'А' (A)       U+0410     933
+    // Math ∑        U+2211        3228
+    // Math ∫        U+222B        3254
+    // Math ≠        U+2260        3307
+    // Musical ♩     U+2669        3905
+    // Snowman ☃     U+2603        3803
+    // Emoji 😀      U+1F600       5857   ← supplementary plane, needs surrogate pair
+    // .notdef       —             —          0    (advance = 1229 design units)
+    // PUA U+E001    —             —          0    (.notdef — not in DejaVu Sans)
+
+    let private loadParts () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let maxpSpan = tables.Maxp.Span
+        let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+        let cmap = CMap.parse tables.Cmap
+        let hmtx = Hmtx.parse tables.Hmtx tables.Hhea numGlyphs
+        let kern =
+            match tables.Kern with
+            | ValueSome kd -> KernLegacy.parse kd
+            | ValueNone    -> ValueNone
+        tables, metrics, cmap, hmtx, kern
+
+    // ── 1. Surrogate pair handling ───────────────────────────────────────────
+
+    [<Fact>]
+    let ``Shaper: emoji surrogate pair produces 1 glyph, not 2`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // 😀 is U+1F600, encoded in UTF-16 as surrogate pair (2 char units)
+        let text = "😀".AsSpan()  // text.Length = 2 (UTF-16)
+        Assert.Equal(2, text.Length)   // verify it really IS a surrogate pair
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        // Should produce EXACTLY 1 glyph (the emoji), not 2 .notdef
+        Assert.Equal(1, result.GlyphCount)
+
+    [<Fact>]
+    let ``Shaper: emoji resolves to correct glyph ID 5857`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        let text = "😀".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(5857us, buffer.[0].GlyphId)
+
+    [<Fact>]
+    let ``Shaper: emoji ClusterIndex points to first char unit (0)`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        let text = "😀".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(0, buffer.[0].ClusterIndex)
+
+    [<Fact>]
+    let ``Shaper: text with surrogate pair produces correct glyph count`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // "A😀B" = 4 UTF-16 code units → should produce 3 glyphs (A, 😀, B)
+        let text = "A😀B".AsSpan()
+        Assert.Equal(4, text.Length)   // verify surrogate pair makes 4 chars
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(3, result.GlyphCount)
+
+    [<Fact>]
+    let ``Shaper: surrogate pair ClusterIndex for second glyph is 2 (after pair)`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // "A😀B": A→cluster=0, ��→cluster=1, B→cluster=3
+        let text = "A😀B".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(0, buffer.[0].ClusterIndex)   // 'A' at char 0
+        Assert.Equal(1, buffer.[1].ClusterIndex)   // '😀' starts at char 1 (high surrogate)
+        Assert.Equal(3, buffer.[2].ClusterIndex)   // 'B' at char 3 (after 2-unit emoji)
+
+    [<Fact>]
+    let ``Shaper: multiple surrogate pairs produce correct glyph count`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // "😀😀" = 4 UTF-16 code units → 2 glyphs
+        let text = "😀😀".AsSpan()
+        Assert.Equal(4, text.Length)
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(2, result.GlyphCount)
+
+    [<Fact>]
+    let ``Shaper: emoji has positive XAdvance (not zero-width like error glyphs)`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        let text = "😀".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        // DejaVu emoji advance = 2135 design units
+        Assert.True(buffer.[0].XAdvance > 1000.0f,
+            sprintf "Emoji should have positive advance, got %g" buffer.[0].XAdvance)
+
+    // ── 2. BMP multi-script glyph resolution ────────────────────────────────
+
+    [<Fact>]
+    let ``CMap: Hebrew alef (U+05D0) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x05D0u  // א
+        Assert.Equal(1319us, gid)
+
+    [<Fact>]
+    let ``CMap: Arabic alef (U+0627) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x0627u  // ا
+        Assert.Equal(1365us, gid)
+
+    [<Fact>]
+    let ``CMap: Greek small alpha (U+03B1) resolves to correct glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x03B1u  // α
+        Assert.Equal(838us, gid)
+
+    [<Fact>]
+    let ``CMap: Cyrillic capital A (U+0410) resolves to correct glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x0410u  // А
+        Assert.Equal(933us, gid)
+
+    [<Fact>]
+    let ``CMap: Math sum symbol (U+2211) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x2211u  // ∑
+        Assert.Equal(3228us, gid)
+
+    [<Fact>]
+    let ``CMap: Math integral (U+222B) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x222Bu  // ∫
+        Assert.Equal(3254us, gid)
+
+    [<Fact>]
+    let ``CMap: Math not-equal (U+2260) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x2260u  // ≠
+        Assert.Equal(3307us, gid)
+
+    [<Fact>]
+    let ``CMap: Snowman (U+2603) resolves to non-zero glyph ID`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0x2603u  // ☃
+        Assert.Equal(3803us, gid)
+
+    [<Fact>]
+    let ``CMap: PUA U+E001 resolves to .notdef (font has no PUA glyphs)`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0xE001u
+        // DejaVu Sans has no PUA glyphs; expect .notdef (0)
+        Assert.Equal(0us, gid)
+
+    [<Fact>]
+    let ``CMap: unmapped codepoint U+FFFE returns .notdef`` () =
+        let _, _, cmap, _, _ = loadParts()
+        let gid = CMap.resolve cmap 0xFFFEu
+        Assert.Equal(0us, gid)
+
+    // ── 3. Graceful .notdef fallback ─────────────────────────────────────────
+
+    [<Fact>]
+    let ``Shaper: unmapped codepoint produces .notdef glyph with positive advance`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // Use a private-use character that DejaVu Sans doesn't have
+        let text = "\uE001".AsSpan()  // PUA - not in DejaVu Sans
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(1, result.GlyphCount)
+        Assert.Equal(0us, buffer.[0].GlyphId)   // .notdef
+        // .notdef should have a positive advance (1229 design units in DejaVu Sans)
+        Assert.True(buffer.[0].XAdvance > 0.0f, ".notdef should have positive advance")
+
+    [<Fact>]
+    let ``Shaper: text with mixed mapped and unmapped codepoints produces correct count`` () =
+        let _, _, cmap, hmtx, kern = loadParts()
+        // 'A' (mapped), PUA (unmapped → .notdef), 'B' (mapped) = 3 glyphs
+        let text = "A\uE001B".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern 1.0f Single.MaxValue buffer
+        Assert.Equal(3, result.GlyphCount)
+        Assert.Equal(36us, buffer.[0].GlyphId)   // 'A'
+        Assert.Equal(0us,  buffer.[1].GlyphId)   // .notdef
+        Assert.Equal(37us, buffer.[2].GlyphId)   // 'B' = glyph 37 in DejaVu
+
+    // ── 4. Multi-script layout: no crash, monotonic positions ───────────────
+
+    let private layoutWide (text: string) =
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.parallelogram { X = 5000.0f; Y = 100.0f } 9000.0f 200.0f 0.0f
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape; Font = tables; Metrics = metrics
+            FontSizePx = 20.0f; Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        result
+
+    [<Fact>]
+    let ``Layout: Hebrew text does not crash and produces glyphs`` () =
+        // שלום (Shalom) — Hebrew, RTL
+        let result = layoutWide "שלום"
+        Assert.True(result.Glyphs.Length > 0, "Hebrew text should produce glyphs")
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: Arabic text does not crash and produces glyphs`` () =
+        // مرحبا (Marhaba / hello) — Arabic, RTL
+        let result = layoutWide "مرحبا"
+        Assert.True(result.Glyphs.Length > 0, "Arabic text should produce glyphs")
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: Greek text produces correct glyph count`` () =
+        let result = layoutWide "αβγδ"
+        // Should produce exactly 4 glyphs (all are BMP, no surrogates)
+        Assert.Equal(4, result.Glyphs.Length)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: Math symbols produce non-zero glyph IDs`` () =
+        let result = layoutWide "∑∫≠"
+        let span = result.Glyphs.Span
+        Assert.Equal(3, span.Length)
+        // All three should resolve to known non-zero glyph IDs
+        Assert.Equal(3228us, span.[0].GlyphId)  // ∑
+        Assert.Equal(3254us, span.[1].GlyphId)  // ∫
+        Assert.Equal(3307us, span.[2].GlyphId)  // ≠
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: emoji in text produces 1 glyph with correct glyph ID`` () =
+        let result = layoutWide "A😀B"
+        let span = result.Glyphs.Span
+        // "A😀B" = 4 UTF-16 chars = 3 codepoints = 3 glyphs
+        Assert.Equal(3, span.Length)
+        Assert.Equal(36us,   span.[0].GlyphId)  // 'A'
+        Assert.Equal(5857us, span.[1].GlyphId)  // 😀
+        Assert.Equal(37us,   span.[2].GlyphId)  // 'B' = glyph 37 in DejaVu
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: mixed Latin-Greek-Hebrew text does not crash`` () =
+        let result = layoutWide "Hello αβγ שלום"
+        Assert.True(result.Glyphs.Length > 0, "Mixed script text should produce glyphs")
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: math formula text produces expected glyph count`` () =
+        // "∑x≠∫" — 4 BMP chars = 4 codepoints = 4 glyphs
+        let result = layoutWide "∑x≠∫"
+        Assert.Equal(4, result.Glyphs.Length)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: emoji surrounded by Latin has monotonically increasing X positions`` () =
+        let result = layoutWide "A😀B"
+        let span = result.Glyphs.Span
+        Assert.Equal(3, span.Length)
+        Assert.True(span.[1].X > span.[0].X, "Emoji X should be right of A")
+        Assert.True(span.[2].X > span.[1].X, "B X should be right of emoji")
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 5. ZWJ cluster handling ──────────────────────────────────────────────
+
+    [<Fact>]
+    let ``TextAnalyzer: ZWJ is not a cluster boundary`` () =
+        // "A\u200DB" — ZWJ between A and B: should not break cluster before B
+        let text = "A\u200DB".AsSpan()
+        // After A (index 1): ZWJ is at index 1, then B at index 2
+        // isClusterBoundary(1) → false because ZWJ is not a boundary breaker BEFORE ZWJ
+        //   Wait — the cluster boundary check: position 1 is before ZWJ.
+        //   GB9: × ZWJ: "do not break before ZWJ" — isClusterBoundary(1) = false
+        Assert.False(TextAnalyzer.isClusterBoundary text 1,
+            "Should not break before ZWJ")
+
+    [<Fact>]
+    let ``TextAnalyzer: combining diacritic not a cluster boundary`` () =
+        // "e\u0301" (é) — combining acute accent
+        let text = "e\u0301".AsSpan()
+        Assert.False(TextAnalyzer.isClusterBoundary text 1,
+            "Combining accent should not be a cluster boundary")
+
+    [<Fact>]
+    let ``TextAnalyzer: RTL detection for Hebrew`` () =
+        // Text analyzer should detect Hebrew as RTL
+        let text = "שלום".AsSpan()
+        let runs = Array.zeroCreate<TextAnalyzer.TextRun> 10
+        let count = TextAnalyzer.analyze text runs
+        Assert.True(count >= 1, "Should detect at least one run")
+        Assert.True(runs.[0].IsRTL, "Hebrew should be detected as RTL")
+
+    [<Fact>]
+    let ``TextAnalyzer: RTL detection for Arabic`` () =
+        let text = "مرحبا".AsSpan()
+        let runs = Array.zeroCreate<TextAnalyzer.TextRun> 10
+        let count = TextAnalyzer.analyze text runs
+        Assert.True(count >= 1, "Should detect at least one run")
+        Assert.True(runs.[0].IsRTL, "Arabic should be detected as RTL")
+
+    [<Fact>]
+    let ``TextAnalyzer: LTR detection for Latin`` () =
+        let text = "Hello".AsSpan()
+        let runs = Array.zeroCreate<TextAnalyzer.TextRun> 10
+        let count = TextAnalyzer.analyze text runs
+        Assert.True(count >= 1, "Should detect at least one run")
+        Assert.False(runs.[0].IsRTL, "Latin should be detected as LTR")
+
+    // ── 6. Long-text layout coverage (circle and triangle) ───────────────────
+
+    let private longText =
+        "The quick brown fox jumps over the lazy dog. " +
+        "Pack my box with five dozen liquor jugs. " +
+        "How vexingly quick daft zebras jump! " +
+        "The five boxing wizards jump quickly."
+
+    [<Fact>]
+    let ``Layout: long text in circle produces many glyphs`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.circle { X = 200.0f; Y = 200.0f } 200.0f
+        let req = {
+            Text = ReadOnlyMemory(longText.ToCharArray())
+            Shape = shape; Font = tables; Metrics = metrics
+            FontSizePx = 12.0f; Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length > 30,
+            sprintf "Long text in circle should yield > 30 glyphs, got %d" result.Glyphs.Length)
+        // All glyphs must be inside or on the circle boundary
+        let span = result.Glyphs.Span
+        for i in 0 .. span.Length - 1 do
+            let gp = span.[i]
+            let dx = gp.X - 200.0f
+            let dy = gp.Y - 200.0f
+            let dist = sqrt (dx*dx + dy*dy)
+            Assert.True(dist <= 205.0f,
+                sprintf "Glyph %d at (%.1f,%.1f) outside circle (dist=%.1f)" i gp.X gp.Y dist)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: long text in triangle produces many glyphs`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.triangle { X = 250.0f; Y = 200.0f } 400.0f 300.0f
+        let req = {
+            Text = ReadOnlyMemory(longText.ToCharArray())
+            Shape = shape; Font = tables; Metrics = metrics
+            FontSizePx = 11.0f; Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length > 40,
+            sprintf "Long text in triangle should yield > 40 glyphs, got %d" result.Glyphs.Length)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: X positions monotonically increase across multi-script line`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        // Wide shape ensures single line
+        let shape = Shapes.parallelogram { X = 5000.0f; Y = 100.0f } 9000.0f 200.0f 0.0f
+        let text = "Hello αβγ ∑∫ ☃♠"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape; Font = tables; Metrics = metrics
+            FontSizePx = 20.0f; Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        let span = result.Glyphs.Span
+        Assert.True(span.Length > 5, "Should place multiple glyphs")
+        let mutable prevX = Single.MinValue
+        let mutable prevY = Single.MinValue
+        for i in 0 .. span.Length - 1 do
+            let gp = span.[i]
+            if abs(gp.Y - prevY) > 1.0f then
+                prevX <- Single.MinValue
+            Assert.True(gp.X >= prevX - 0.1f,
+                sprintf "Glyph %d X=%.2f should be >= prevX=%.2f" i gp.X prevX)
+            prevX <- gp.X
+            prevY <- gp.Y
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)

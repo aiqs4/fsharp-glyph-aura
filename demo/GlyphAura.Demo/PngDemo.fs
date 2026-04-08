@@ -268,12 +268,16 @@ let runAll
 
     let typeface = loadTypeface()
     let pangram  = "The quick brown fox jumps over the lazy dog."
+    let longText =
+        "The quick brown fox jumps over the lazy dog. " +
+        "Pack my box with five dozen liquor jugs. " +
+        "How vexingly quick daft zebras jump!"
     let hello    = "Hello, World! GlyphAura"
     let out name = Path.Combine(outDir, name)
 
     let p1 = renderScene tables metrics
                 (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                pangram 14.0f Flow typeface (out "circle_flow.png")
+                longText 12.0f Flow typeface (out "circle_flow.png")
 
     let p2 = renderScene tables metrics
                 (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
@@ -285,7 +289,7 @@ let runAll
 
     let p4 = renderScene tables metrics
                 (Shapes.triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f)
-                pangram 12.0f Flow typeface (out "triangle_flow.png")
+                longText 11.0f Flow typeface (out "triangle_flow.png")
 
     let p5 = renderScene tables metrics
                 (Shapes.parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f)
