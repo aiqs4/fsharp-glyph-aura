@@ -1,9 +1,28 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- NuGet package metadata -->
+    <PackageId>GlyphAuro</PackageId>
+    <Version>0.3.0</Version>
+    <Title>GlyphAuro — F# OpenType Shaping &amp; SDF Layout Engine</Title>
+    <Description>
+      Zero-alloc OpenType text shaping and SDF layout engine for F#.
+      Targets Wasm-GC backends. Parses cmap/hmtx/kern/GPOS, shapes Latin text,
+      flows glyphs into arbitrary SDF shapes (Circle, Diamond, Triangle,
+      Parallelogram), and emits a WebGPU-ready DrawList.
+    </Description>
+    <PackageTags>fsharp;opentype;font;shaping;layout;sdf;wasm;webgpu;scenograph;typography</PackageTags>
+    <PackageProjectUrl>https://github.com/aiqs4/fsharp-glyph-auro</PackageProjectUrl>
+    <PackageReleaseNotes>See CHANGELOG.md for release notes.</PackageReleaseNotes>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="BinaryReader.fs" />
