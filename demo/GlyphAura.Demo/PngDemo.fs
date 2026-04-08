@@ -136,13 +136,14 @@ let private renderScene
     (text: string)
     (fontSizePx: float32)
     (mode: LayoutMode)
+    (alignment: TextAlignment)
     (typeface: SKTypeface)
     (outPath: string) =
 
     let req = {
         Text       = ReadOnlyMemory(text.ToCharArray())
         Shape      = shape; Font = tables; Metrics = metrics
-        FontSizePx = fontSizePx; Mode = mode
+        FontSizePx = fontSizePx; Mode = mode; Alignment = alignment
     }
     let result = layout req
     let dl     = fromLayoutResult result
@@ -225,7 +226,7 @@ let private renderKerningTest
         let req = {
             Text       = ReadOnlyMemory(pair.ToCharArray())
             Shape      = shape; Font = tables; Metrics = metrics
-            FontSizePx = fontSize; Mode = Flow
+            FontSizePx = fontSize; Mode = Flow; Alignment = Left
         }
         let result = layout req
         let dl     = fromLayoutResult result
@@ -283,31 +284,48 @@ let runAll
 
     let p1 = renderScene tables metrics
                 (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                longText 12.0f Flow typeface (out "circle_flow.png")
+                longText 12.0f Flow Left typeface (out "circle_flow.png")
 
     let p2 = renderScene tables metrics
                 (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                hello 14.0f Fit typeface (out "circle_fit.png")
+                hello 14.0f Fit Left typeface (out "circle_fit.png")
 
     let p3 = renderScene tables metrics
                 (Shapes.diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f)
-                pangram 12.0f Flow typeface (out "diamond_flow.png")
+                pangram 12.0f Flow Left typeface (out "diamond_flow.png")
 
     let p4 = renderScene tables metrics
                 (Shapes.triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f)
-                longText 11.0f Flow typeface (out "triangle_flow.png")
+                longText 11.0f Flow Left typeface (out "triangle_flow.png")
 
     let p5 = renderScene tables metrics
                 (Shapes.parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f)
-                pangram 12.0f Flow typeface (out "parallelogram_flow.png")
+                pangram 12.0f Flow Left typeface (out "parallelogram_flow.png")
 
     let p6 = renderKerningTest tables metrics typeface (out "kerning_test.png")
 
+    // Center alignment demos
+    let p7 = renderScene tables metrics
+                (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
+                longText 12.0f Flow Center typeface (out "circle_center.png")
+
+    let p8 = renderScene tables metrics
+                (Shapes.diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f)
+                pangram 12.0f Flow Center typeface (out "diamond_center.png")
+
+    // Justified alignment demos
+    let p9 = renderScene tables metrics
+                (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
+                longText 12.0f Flow Justified typeface (out "circle_justified.png")
+
     [
-        "Circle Flow (PNG)",        p1
-        "Circle Fit (PNG)",         p2
-        "Diamond Flow (PNG)",       p3
-        "Triangle Flow (PNG)",      p4
-        "Parallelogram Flow (PNG)", p5
-        "Kerning Test (PNG)",       p6
+        "Circle Flow (PNG)",           p1
+        "Circle Fit (PNG)",            p2
+        "Diamond Flow (PNG)",          p3
+        "Triangle Flow (PNG)",         p4
+        "Parallelogram Flow (PNG)",    p5
+        "Kerning Test (PNG)",          p6
+        "Circle Center (PNG)",         p7
+        "Diamond Center (PNG)",        p8
+        "Circle Justified (PNG)",      p9
     ]

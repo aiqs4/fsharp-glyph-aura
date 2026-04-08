@@ -173,7 +173,7 @@ let private buildKerningSvg (tables: FontTables) (metrics: FontMetrics) : string
         let req = {
             Text       = ReadOnlyMemory(pair.ToCharArray())
             Shape      = shape; Font = tables; Metrics = metrics
-            FontSizePx = fontSize; Mode = Flow
+            FontSizePx = fontSize; Mode = Flow; Alignment = Left
         }
         let result = layout req
         let dl     = fromLayoutResult result
@@ -232,11 +232,11 @@ let runAll
         "How vexingly quick daft zebras jump!"
     let hello   = "Hello, World! GlyphAura"
 
-    let runScene (shape: ISdfShape) (text: string) (fontSize: float32) (mode: LayoutMode) (title: string) =
+    let runScene (shape: ISdfShape) (text: string) (fontSize: float32) (mode: LayoutMode) (alignment: TextAlignment) (title: string) =
         let req = {
             Text = ReadOnlyMemory(text.ToCharArray())
             Shape = shape; Font = tables; Metrics = metrics
-            FontSizePx = fontSize; Mode = mode
+            FontSizePx = fontSize; Mode = mode; Alignment = alignment
         }
         let result = layout req
         let dl     = fromLayoutResult result
@@ -247,31 +247,48 @@ let runAll
 
     let p1 = write "circle_flow.svg"
                 (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                    longText 12.0f Flow "Circle r=150 — Flow 12px (long text)")
+                    longText 12.0f Flow Left "Circle r=150 — Flow 12px (long text)")
 
     let p2 = write "circle_fit.svg"
                 (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
-                    hello 14.0f Fit "Circle r=150 — Fit (auto-size)")
+                    hello 14.0f Fit Left "Circle r=150 — Fit (auto-size)")
 
     let p3 = write "diamond_flow.svg"
                 (runScene (Shapes.diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f)
-                    pangram 12.0f Flow "Diamond 150×150 — Flow 12px")
+                    pangram 12.0f Flow Left "Diamond 150×150 — Flow 12px")
 
     let p4 = write "triangle_flow.svg"
                 (runScene (Shapes.triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f)
-                    longText 11.0f Flow "Triangle 300×200 — Flow 11px (long text)")
+                    longText 11.0f Flow Left "Triangle 300×200 — Flow 11px (long text)")
 
     let p5 = write "parallelogram_flow.svg"
                 (runScene (Shapes.parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f)
-                    pangram 12.0f Flow "Parallelogram 250×180 shear=0.4 — Flow 12px")
+                    pangram 12.0f Flow Left "Parallelogram 250×180 shear=0.4 — Flow 12px")
 
     let p6 = write "kerning_test.svg" (buildKerningSvg tables metrics)
 
+    // Center alignment demos
+    let p7 = write "circle_center.svg"
+                (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
+                    longText 12.0f Flow Center "Circle r=150 — Center 12px")
+
+    let p8 = write "diamond_center.svg"
+                (runScene (Shapes.diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f)
+                    pangram 12.0f Flow Center "Diamond 150×150 — Center 12px")
+
+    // Justified alignment demos
+    let p9 = write "circle_justified.svg"
+                (runScene (Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f)
+                    longText 12.0f Flow Justified "Circle r=150 — Justified 12px")
+
     [
-        "Circle Flow (SVG)",       p1
-        "Circle Fit (SVG)",        p2
-        "Diamond Flow (SVG)",      p3
-        "Triangle Flow (SVG)",     p4
-        "Parallelogram Flow (SVG)", p5
-        "Kerning Test (SVG)",      p6
+        "Circle Flow (SVG)",           p1
+        "Circle Fit (SVG)",            p2
+        "Diamond Flow (SVG)",          p3
+        "Triangle Flow (SVG)",         p4
+        "Parallelogram Flow (SVG)",    p5
+        "Kerning Test (SVG)",          p6
+        "Circle Center (SVG)",         p7
+        "Diamond Center (SVG)",        p8
+        "Circle Justified (SVG)",      p9
     ]

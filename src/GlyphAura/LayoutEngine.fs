@@ -15,6 +15,17 @@ module LayoutEngine =
         | Flow
         | Fit
 
+    /// Text alignment within each scanline.
+    [<Struct>]
+    type TextAlignment =
+        /// Left-aligned (default). First glyph at scanline xStart.
+        | Left
+        /// Centered horizontally within each scanline.
+        | Center
+        /// Justified: extra space distributed between words to fill the scanline.
+        /// Falls back to Center when only one word or gaps would exceed 3× normal.
+        | Justified
+
     /// A positioned glyph in the output.
     [<Struct>]
     type GlyphPosition = {
@@ -35,6 +46,8 @@ module LayoutEngine =
         Metrics: FontMetrics
         FontSizePx: float32
         Mode: LayoutMode
+        /// Text alignment within each scanline (default: Left).
+        Alignment: TextAlignment
     }
 
     /// Output from the layout engine.
@@ -87,13 +100,18 @@ module LayoutEngine =
             | ValueNone -> 0.0f
 
     /// Layout a single line with word-boundary breaking.
-    /// Returns the number of glyphs placed and the text index consumed.
+    /// Returns the number of glyphs placed, text index consumed, and actual line width.
     ///
     /// Narrow-line contract: if the available width is too narrow for even the
-    /// FIRST glyph (GlyphCount = 0 after shaping), return (0, 0) so that
+    /// FIRST glyph (GlyphCount = 0 after shaping), return (0, 0, 0) so that
     /// textIdx does NOT advance and the same text is retried on the next,
     /// wider scanline.  This prevents text from being silently swallowed near
     /// the apex of a triangle or the top/bottom of a circle.
+    ///
+    /// 2-character minimum rule: if the first word exceeds the line width and
+    /// cannot be split into fragments of at least 2 characters each, the line
+    /// is skipped entirely.  This prevents typographic errors like "t-he" or
+    /// "th-e".
     let private layoutLine
         (text: ReadOnlySpan<char>)
         (fd: FontData)
@@ -103,7 +121,7 @@ module LayoutEngine =
         (y: float32)
         (buffer: GlyphPosition array)
         (outIdx: int)
-        : struct (int * int) =  // (glyphsPlaced, charsConsumed)
+        : struct (int * int * float32) =  // (glyphsPlaced, charsConsumed, lineWidth)
 
         let availableWidth = xEnd - xStart  // pixels — shaper's totalAdvance is also in pixels
         let shapeBuf = ArrayPool<ShapedGlyph>.Shared.Rent(text.Length)
@@ -118,7 +136,7 @@ module LayoutEngine =
             // placing 0 glyphs, silently discarding characters near the apex of
             // a triangle or the extremities of a circle.
             if result.GlyphCount = 0 && result.LastFitIndex >= 0 then
-                struct (0, 0)
+                struct (0, 0, 0.0f)
             else
 
             let mutable charsConsumed = 0
@@ -148,9 +166,26 @@ module LayoutEngine =
                 while breakIdx > 0 && text.[breakIdx] <> ' ' do
                     breakIdx <- breakIdx - 1
 
+                let mutable skipLine = false
                 if breakIdx = 0 && text.[0] <> ' ' then
-                    // Single word exceeds line width — force break at lastFit
-                    breakIdx <- max 1 lastFit
+                    // No word boundary found — check 2-character minimum rule.
+                    // Find word length (chars until next space or end).
+                    let mutable wordEnd = 0
+                    while wordEnd < text.Length && text.[wordEnd] <> ' ' do
+                        wordEnd <- wordEnd + 1
+                    // For short words (< 4 chars, e.g. "the", "a", "an"):
+                    // skip the line — they cannot be split into 2+2 fragments.
+                    // For longer words: allow force-break if both fragments ≥ 2 chars.
+                    if wordEnd < 4 then
+                        skipLine <- true
+                    elif lastFit >= 2 && (wordEnd - lastFit) >= 2 then
+                        breakIdx <- lastFit
+                    else
+                        breakIdx <- max 1 lastFit
+
+                if skipLine then
+                    struct (0, 0, 0.0f)
+                else
 
                 // Place glyphs up to breakIdx
                 let mutable x = xStart
@@ -163,10 +198,14 @@ module LayoutEngine =
                         x <- x + correctedAdvance i (min breakIdx result.GlyphCount)
                         glyphsPlaced <- glyphsPlaced + 1
 
+                let lineWidth = x - xStart
+
                 // Skip whitespace after break
                 charsConsumed <- breakIdx
                 while charsConsumed < text.Length && text.[charsConsumed] = ' ' do
                     charsConsumed <- charsConsumed + 1
+
+                struct (glyphsPlaced, charsConsumed, lineWidth)
             else
                 // All glyphs fit
                 let mutable x = xStart
@@ -179,7 +218,8 @@ module LayoutEngine =
                         glyphsPlaced <- glyphsPlaced + 1
                 charsConsumed <- text.Length
 
-            struct (glyphsPlaced, charsConsumed)
+                let lineWidth = x - xStart
+                struct (glyphsPlaced, charsConsumed, lineWidth)
         finally
             ArrayPool<ShapedGlyph>.Shared.Return(shapeBuf, false)
 
@@ -231,6 +271,75 @@ module LayoutEngine =
 
             if xe > xs then ValueSome(struct (xs, xe)) else ValueNone
 
+    /// Apply text alignment to a line of glyphs in the buffer.
+    /// Center: shift all glyphs by (available - used) / 2.
+    /// Justified: distribute extra space between word gaps.
+    let private applyAlignment
+        (alignment: TextAlignment)
+        (buffer: GlyphPosition array)
+        (lineStart: int)
+        (lineCount: int)
+        (lineWidth: float32)
+        (availableWidth: float32)
+        (text: ReadOnlySpan<char>)
+        : unit =
+
+        if lineCount <= 0 || lineWidth <= 0.0f then ()
+        else
+
+        let unused = availableWidth - lineWidth
+
+        match alignment with
+        | Left -> ()
+
+        | Center ->
+            let offset = unused * 0.5f
+            if offset > 0.5f then
+                for i in lineStart .. lineStart + lineCount - 1 do
+                    let gp = buffer.[i]
+                    buffer.[i] <- { gp with X = gp.X + offset }
+
+        | Justified ->
+            // Count word gaps: positions where ClusterIndex jumps by > 1
+            // (indicating a consumed whitespace between words).
+            let mutable gapCount = 0
+            for i in lineStart .. lineStart + lineCount - 2 do
+                let ci1 = buffer.[i].ClusterIndex
+                let ci2 = buffer.[i + 1].ClusterIndex
+                if ci2 - ci1 > 1 then
+                    gapCount <- gapCount + 1
+
+            if gapCount = 0 then
+                // Single word — fall back to center alignment
+                let offset = unused * 0.5f
+                if offset > 0.5f then
+                    for i in lineStart .. lineStart + lineCount - 1 do
+                        let gp = buffer.[i]
+                        buffer.[i] <- { gp with X = gp.X + offset }
+            else
+                let extraPerGap = unused / float32 gapCount
+                // Safety: if gaps would be > 3× the normal word space, fall back to center
+                let upm = 2048.0f  // typical; actual UPM is already encoded in the scale
+                if extraPerGap > lineWidth * 0.5f then
+                    // Too wide — center instead
+                    let offset = unused * 0.5f
+                    if offset > 0.5f then
+                        for i in lineStart .. lineStart + lineCount - 1 do
+                            let gp = buffer.[i]
+                            buffer.[i] <- { gp with X = gp.X + offset }
+                else
+                    // Distribute space at each word gap
+                    let mutable gapsSeen = 0
+                    for i in lineStart .. lineStart + lineCount - 2 do
+                        let ci1 = buffer.[i].ClusterIndex
+                        let ci2 = buffer.[i + 1].ClusterIndex
+                        if ci2 - ci1 > 1 then
+                            gapsSeen <- gapsSeen + 1
+                        // Shift all glyphs after each gap
+                        if gapsSeen > 0 then
+                            let gp = buffer.[i + 1]
+                            buffer.[i + 1] <- { gp with X = gp.X + float32 gapsSeen * extraPerGap }
+
     /// Core layout loop: descend the shape line by line, shape text into each line.
     let private layoutAtSize
         (text: ReadOnlySpan<char>)
@@ -239,6 +348,7 @@ module LayoutEngine =
         (fontSizePx: float32)
         (buffer: GlyphPosition array)
         (metrics: FontMetrics)
+        (alignment: TextAlignment)
         : struct (int * int * Rectangle) =  // (glyphCount, lastTextIndex, bounds)
 
         let upm = float32 metrics.UnitsPerEm
@@ -276,13 +386,17 @@ module LayoutEngine =
                 y <- y + lineHeight
             | ValueSome(struct (xStart, xEnd)) ->
                 let remaining = text.Slice(textIdx)
-                let struct (glyphsPlaced, charsConsumed) = layoutLine remaining fd scale xStart xEnd y buffer outIdx
+                let struct (glyphsPlaced, charsConsumed, lineWidth) = layoutLine remaining fd scale xStart xEnd y buffer outIdx
 
                 // Adjust ClusterIndex to absolute position in the original text.
                 // layoutLine sets ClusterIndex relative to the text slice — add textIdx.
                 for i in outIdx .. outIdx + glyphsPlaced - 1 do
                     let gp = buffer.[i]
                     buffer.[i] <- { gp with ClusterIndex = gp.ClusterIndex + textIdx }
+
+                // Apply text alignment (Center, Justified) to this line's glyphs.
+                let availableWidth = xEnd - xStart
+                applyAlignment alignment buffer outIdx glyphsPlaced lineWidth availableWidth text
 
                 // Update bounds
                 for i in outIdx .. outIdx + glyphsPlaced - 1 do
@@ -306,7 +420,7 @@ module LayoutEngine =
     let private allTextFits (text: ReadOnlySpan<char>) (shape: ISdfShape) (fd: FontData) (fontSize: float32) (metrics: FontMetrics) : bool =
         let buffer = ArrayPool<GlyphPosition>.Shared.Rent(text.Length)
         try
-            let struct (_, lastTextIdx, _) = layoutAtSize text shape fd fontSize buffer metrics
+            let struct (_, lastTextIdx, _) = layoutAtSize text shape fd fontSize buffer metrics Left
             lastTextIdx >= text.Length
         finally
             ArrayPool<GlyphPosition>.Shared.Return(buffer, false)
@@ -345,7 +459,7 @@ module LayoutEngine =
             | Fit -> findOptimalFontSize text req.Shape fd req.Metrics
 
         let buffer = ArrayPool<GlyphPosition>.Shared.Rent(text.Length * 2)  // generous allocation
-        let struct (glyphCount, lastTextIdx, bounds) = layoutAtSize text req.Shape fd fontSize buffer req.Metrics
+        let struct (glyphCount, lastTextIdx, bounds) = layoutAtSize text req.Shape fd fontSize buffer req.Metrics req.Alignment
 
         { Glyphs = Memory<GlyphPosition>(buffer, 0, glyphCount)
           GlyphBuffer = buffer

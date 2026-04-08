@@ -29,24 +29,29 @@ let private printBanner (title: string) =
 /// Render a DrawList onto a character grid at the given scale.
 /// The shape boundary is drawn with '|' characters.
 ///
-/// Fix: shape boundary for each canvas row is drawn at the same Y that the
-/// layout engine used for that row's baseline.  Previously a uniform Y grid
-/// was used, which caused glyphs to appear outside the boundary when the
-/// uniform Y differed from the actual baseline Y.
+/// Improved ASCII rendering:
+///   • Auto-sized canvas proportional to shape dimensions
+///   • Column-collision avoidance: glyphs on the same row are processed
+///     left-to-right and bumped to the next column if occupied
+///   • Shape boundary is drawn FIRST, then glyphs on top
 let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) (text: string) =
     let canvas = Array2D.create canvasH canvasW ' '
     let bb = shape.BoundingBox
+
+    // Mapping helpers
+    let toCol (x: float32) = int (float32 (canvasW - 1) * (x - bb.Left) / bb.Width)
+    let toRow (y: float32) = int (float32 (canvasH - 1) * (y - bb.Top) / bb.Height)
 
     // Build a per-row Y table.  Default: uniform spacing through the bounding box.
     // Rows that contain glyphs are overridden with the glyph's actual baseline Y so
     // that the shape boundary is queried at exactly the same scanline that the layout
     // engine used — eliminating the visual artefact of characters outside the edge.
     let rowY = Array.init canvasH (fun row ->
-        bb.Top + float32 row * (bb.Height / float32 canvasH))
+        bb.Top + float32 row * (bb.Height / float32 (canvasH - 1)))
 
     for i in 0 .. dl.GlyphCount - 1 do
         let py = dl.YPositions.[i]
-        let row = int (float32 canvasH * (py - bb.Top) / bb.Height)
+        let row = toRow py
         if row >= 0 && row < canvasH then
             rowY.[row] <- py   // anchor to actual baseline
 
@@ -56,31 +61,46 @@ let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) 
         match shape.GetInterval y with
         | ValueNone -> ()
         | ValueSome(struct (xs, xe)) ->
-            let lx = int (float32 canvasW * (xs - bb.Left) / bb.Width)
-            let rx = int (float32 canvasW * (xe - bb.Left) / bb.Width)
+            let lx = toCol xs
+            let rx = min (canvasW - 1) (toCol xe)
             if lx >= 0 && lx < canvasW then canvas.[row, lx] <- '|'
-            if rx >= 0 && rx < canvasW then canvas.[row, min (canvasW - 1) rx] <- '|'
+            if rx >= 0 && rx < canvasW && rx <> lx then canvas.[row, rx] <- '|'
 
-    // Place glyphs (use source text chars via ClusterIndex for correct mapping)
+    // Group glyphs by row, then process left-to-right with collision avoidance.
+    // This prevents narrow glyphs (like 'i', 'l') from being overwritten by
+    // adjacent glyphs that map to the same canvas column.
     let srcChars = text.ToCharArray()
 
-    for i in 0 .. dl.GlyphCount - 1 do
-        let px = dl.XPositions.[i]
-        let py = dl.YPositions.[i]
-        let ci = dl.ClusterIndices.[i]
+    // Collect (row, col, char) tuples and sort by row then col
+    let glyphEntries =
+        [| for i in 0 .. dl.GlyphCount - 1 do
+            let px = dl.XPositions.[i]
+            let py = dl.YPositions.[i]
+            let ci = dl.ClusterIndices.[i]
+            let col = toCol px
+            let row = toRow py
+            if row >= 0 && row < canvasH && col >= 0 then
+                let ch =
+                    if ci >= 0 && ci < srcChars.Length && srcChars.[ci] <> ' ' then
+                        srcChars.[ci]
+                    else '·'
+                (row, col, ch) |]
 
-        // Map to canvas coordinates
-        let col = int (float32 canvasW * (px - bb.Left) / bb.Width)
-        let row = int (float32 canvasH * (py - bb.Top) / bb.Height)
+    // Sort by row, then col
+    let sorted = glyphEntries |> Array.sortBy (fun (r, c, _) -> (r, c))
 
-        if row >= 0 && row < canvasH && col >= 0 && col < canvasW then
-            let ch =
-                if ci >= 0 && ci < srcChars.Length && srcChars.[ci] <> ' ' then
-                    srcChars.[ci]
-                elif ci >= 0 && ci < srcChars.Length then
-                    '·'
-                else '·'
-            canvas.[row, col] <- ch
+    // Place with collision avoidance: on each row, track the last occupied column
+    let mutable lastRow = -1
+    let mutable lastCol = -1
+    for (row, col, ch) in sorted do
+        if row <> lastRow then
+            lastRow <- row
+            lastCol <- -1
+        // Ensure this glyph gets a unique column (bump right if collision)
+        let actualCol = max col (lastCol + 1)
+        if actualCol < canvasW then
+            canvas.[row, actualCol] <- ch
+            lastCol <- actualCol
 
     // Print
     for row in 0 .. canvasH - 1 do
@@ -110,8 +130,8 @@ let private tryLoadFont () : Result<FontTables * FontMetrics, string> =
 
 // ── Demo scenes ──────────────────────────────────────────────────────────
 
-let private runScene (tables: FontTables) (metrics: FontMetrics) (shape: ISdfShape) (shapeName: string) (text: string) (fontSize: float32) (mode: LayoutMode) =
-    printBanner (sprintf "%s — %s (%.0fpx, %A)" shapeName text fontSize mode)
+let private runScene (tables: FontTables) (metrics: FontMetrics) (shape: ISdfShape) (shapeName: string) (text: string) (fontSize: float32) (mode: LayoutMode) (alignment: TextAlignment) =
+    printBanner (sprintf "%s — %s (%.0fpx, %A, %A)" shapeName text fontSize mode alignment)
 
     let req = {
         Text = ReadOnlyMemory(text.ToCharArray())
@@ -120,6 +140,7 @@ let private runScene (tables: FontTables) (metrics: FontMetrics) (shape: ISdfSha
         Metrics = metrics
         FontSizePx = fontSize
         Mode = mode
+        Alignment = alignment
     }
 
     let result = layout req
@@ -132,8 +153,11 @@ let private runScene (tables: FontTables) (metrics: FontMetrics) (shape: ISdfSha
     printfn "  Bounds         : (%.0f, %.0f) → (%.0f, %.0f)" dl.TightBounds.Left dl.TightBounds.Top dl.TightBounds.Right dl.TightBounds.Bottom
     printfn ""
 
-    // ASCII render
-    renderAscii dl shape 72 24 text
+    // ASCII render — auto-size canvas for better resolution
+    let bb = shape.BoundingBox
+    let canvasW = max 72 (min 120 (int (bb.Width / 2.5f)))
+    let canvasH = max 16 (min 48 (int (bb.Height / 6.0f)))
+    renderAscii dl shape canvasW canvasH text
 
     // Return ArrayPool buffer
     if result.GlyphBuffer.Length > 0 then
@@ -207,31 +231,40 @@ let main _ =
 
         // ── Scene 1: Circle, Flow mode (longer text) ─────────────────────
         let circleShape = circle { X = 150.0f; Y = 150.0f } 150.0f
-        runScene tables metrics circleShape "Circle r=150" longText 12.0f Flow |> ignore
+        runScene tables metrics circleShape "Circle r=150" longText 12.0f Flow Left |> ignore
 
         // ── Scene 2: Circle, Fit mode ─────────────────────────────────────
-        runScene tables metrics circleShape "Circle r=150 (Fit)" helloWorld 14.0f Fit |> ignore
+        runScene tables metrics circleShape "Circle r=150 (Fit)" helloWorld 14.0f Fit Left |> ignore
 
         // ── Scene 3: Diamond ──────────────────────────────────────────────
         let diamondShape = diamond { X = 200.0f; Y = 150.0f } 150.0f 150.0f
-        runScene tables metrics diamondShape "Diamond 150×150" pangram 12.0f Flow |> ignore
+        runScene tables metrics diamondShape "Diamond 150×150" pangram 12.0f Flow Left |> ignore
 
         // ── Scene 4: Triangle (longer text) ───────────────────────────────
         let triangleShape = triangle { X = 200.0f; Y = 150.0f } 300.0f 200.0f
-        runScene tables metrics triangleShape "Triangle 300×200" longText 11.0f Flow |> ignore
+        runScene tables metrics triangleShape "Triangle 300×200" longText 11.0f Flow Left |> ignore
 
         // ── Scene 5: Parallelogram ────────────────────────────────────────
         let paraShape = parallelogram { X = 200.0f; Y = 100.0f } 250.0f 180.0f 0.4f
-        runScene tables metrics paraShape "Parallelogram 250×180 shear=0.4" pangram 12.0f Flow |> ignore
+        runScene tables metrics paraShape "Parallelogram 250×180 shear=0.4" pangram 12.0f Flow Left |> ignore
 
         // ── Scene 6: Multi-script demo ────────────────────────────────────
         let wideShape = parallelogram { X = 300.0f; Y = 50.0f } 580.0f 60.0f 0.0f
-        runScene tables metrics wideShape "Multi-script" multiScript 14.0f Flow |> ignore
+        runScene tables metrics wideShape "Multi-script" multiScript 14.0f Flow Left |> ignore
 
-        // ── Scene 7: Cache benchmark ──────────────────────────────────────
+        // ── Scene 7: Center alignment ─────────────────────────────────────
+        runScene tables metrics circleShape "Circle Centered" longText 12.0f Flow Center |> ignore
+
+        // ── Scene 8: Justified alignment ──────────────────────────────────
+        runScene tables metrics circleShape "Circle Justified" longText 12.0f Flow Justified |> ignore
+
+        // ── Scene 9: Diamond centered ─────────────────────────────────────
+        runScene tables metrics diamondShape "Diamond Centered" pangram 12.0f Flow Center |> ignore
+
+        // ── Scene 10: Cache benchmark ─────────────────────────────────────
         runCacheDemo tables metrics
 
-        // ── Scene 7: PNG renders ──────────────────────────────────────
+        // ── PNG renders ──────────────────────────────────────
         printBanner "PNG Renders (SkiaSharp)"
         // Go 5 levels up from net10.0/bin/Release/GlyphAura.Demo/demo → repo root
         let outDir =
@@ -243,7 +276,7 @@ let main _ =
         for (desc, path) in pngResults do
             printfn "  ✓ %s → %s" desc (Path.GetFileName(path))
 
-        // ── Scene 8: SVG renders ──────────────────────────────────────
+        // ── SVG renders ──────────────────────────────────────
         printBanner "SVG Renders"
         let svgResults = SvgDemo.runAll tables metrics outDir
         for (desc, path) in svgResults do

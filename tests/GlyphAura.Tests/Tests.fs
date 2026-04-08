@@ -875,6 +875,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 16.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length > 0, "Should produce glyphs")
@@ -909,6 +910,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 16.0f  // Ignored in Fit mode
             Mode = Fit
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.FontSizeUsed > 4.0f, sprintf "Font size should be > 4, got %f" result.FontSizeUsed)
@@ -934,6 +936,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 14.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.LastTextIndex < text.Length,
@@ -953,6 +956,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 16.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.Equal(0, result.Glyphs.Length)
@@ -970,6 +974,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 16.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.Equal(0, result.Glyphs.Length)
@@ -986,6 +991,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 14.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         // Should have multiple Y values (multiple lines)
@@ -1011,6 +1017,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 16.0f
             Mode = Fit
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         let glyphSpan = result.Glyphs.Span
@@ -1038,6 +1045,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 12.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length > 0, "Should produce glyphs in triangle")
@@ -1057,6 +1065,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 14.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length > 0, "Should produce glyphs in parallelogram")
@@ -1076,6 +1085,7 @@ module LayoutEngineTests =
             Metrics = metrics
             FontSizePx = 14.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         let glyphSpan = result.Glyphs.Span
@@ -1111,6 +1121,7 @@ module DrawListTests =
             Metrics = metrics
             FontSizePx = 16.0f
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         let dl = DrawList.fromLayoutResult result
@@ -1574,6 +1585,7 @@ module PositioningTests =
             Metrics     = metrics
             FontSizePx  = FontSizePx
             Mode        = Flow
+            Alignment   = Left
         }
         let result = LayoutEngine.layout req
         result
@@ -2015,6 +2027,7 @@ module MultiScriptTests =
             Text = ReadOnlyMemory(text.ToCharArray())
             Shape = shape; Font = tables; Metrics = metrics
             FontSizePx = 20.0f; Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         result
@@ -2153,6 +2166,7 @@ module MultiScriptTests =
             Text = ReadOnlyMemory(longText.ToCharArray())
             Shape = shape; Font = tables; Metrics = metrics
             FontSizePx = 12.0f; Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length > 30,
@@ -2177,6 +2191,7 @@ module MultiScriptTests =
             Text = ReadOnlyMemory(longText.ToCharArray())
             Shape = shape; Font = tables; Metrics = metrics
             FontSizePx = 11.0f; Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length > 40,
@@ -2194,6 +2209,7 @@ module MultiScriptTests =
             Text = ReadOnlyMemory(text.ToCharArray())
             Shape = shape; Font = tables; Metrics = metrics
             FontSizePx = 20.0f; Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         let span = result.Glyphs.Span
@@ -2373,7 +2389,7 @@ module ScanlineTests =
         let shape = Shapes.triangle { X = 25.0f; Y = 100.0f } 50.0f 150.0f
         let text  = "ABC"
         let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                      Font = tables; Metrics = metrics; FontSizePx = 14.0f; Mode = Flow }
+                      Font = tables; Metrics = metrics; FontSizePx = 14.0f; Mode = Flow; Alignment = Left }
         let result = LayoutEngine.layout req
         Assert.True(result.Glyphs.Length >= 1, "Should place at least one glyph")
         // Resolve 'A' → its glyph ID
@@ -2393,7 +2409,7 @@ module ScanlineTests =
         let shape = Shapes.triangle { X = 25.0f; Y = 100.0f } 50.0f 150.0f
         let text  = "The quick brown fox jumps over the lazy dog."
         let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow; Alignment = Left }
         let result = LayoutEngine.layout req
         // The triangle base is 50px, height 150px, so after a few narrow lines there's
         // enough width for continuous text. Expect at least 10 glyphs placed.
@@ -2417,7 +2433,7 @@ module ScanlineTests =
         let text  = "The quick brown fox jumps over the lazy dog. " +
                     "Pack my box with five dozen liquor jugs."
         let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow; Alignment = Left }
         let result = LayoutEngine.layout req
         // Every glyph placed must have come from some position in the text, and
         // those positions must be in non-decreasing order.  The simplest invariant
@@ -2443,7 +2459,7 @@ module ScanlineTests =
         let shape = Shapes.circle { X = cx; Y = cy } r
         let text  = "The quick brown fox jumps over the lazy dog."
         let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow; Alignment = Left }
         let result = LayoutEngine.layout req
         // Recompute font metrics for bandMid calculation
         let upm        = float32 metrics.UnitsPerEm
@@ -2477,7 +2493,7 @@ module ScanlineTests =
         let halfBase = base' / 2.0f
         let text    = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs."
         let req     = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                        Font = tables; Metrics = metrics; FontSizePx = 11.0f; Mode = Flow }
+                        Font = tables; Metrics = metrics; FontSizePx = 11.0f; Mode = Flow; Alignment = Left }
         let result  = LayoutEngine.layout req
         let upm        = float32 metrics.UnitsPerEm
         let scale      = 11.0f / upm
@@ -2516,7 +2532,7 @@ module ScanlineTests =
         ]
         for shape in shapes do
             let req = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow; Alignment = Left }
             let result = LayoutEngine.layout req
             Assert.True(result.Glyphs.Length > 0,
                 sprintf "Shape should place at least 1 glyph for text of length %d" text.Length)
@@ -2533,7 +2549,7 @@ module ScanlineTests =
         ]
         for shape in shapes do
             let req = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
-                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Fit }
+                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Fit; Alignment = Left }
             let result = LayoutEngine.layout req
             Assert.True(result.Glyphs.Length > 0,
                 sprintf "Fit mode should place at least 1 glyph")

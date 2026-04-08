@@ -102,6 +102,7 @@ module TextNode =
             Metrics = node.Metrics
             FontSizePx = node.FontSizePx
             Mode = Flow
+            Alignment = Left
         }
         let result = LayoutEngine.layout req
         let dl = DrawList.fromLayoutResult result

@@ -91,6 +91,7 @@ let private runFlow (shape: ISdfShape) (text: string) (fontSize: float32) : Layo
         Metrics    = metrics
         FontSizePx = fontSize
         Mode       = Flow
+        Alignment  = Left
     }
     layout req
 
@@ -339,6 +340,7 @@ module EdgeCases =
             Metrics    = metrics
             FontSizePx = 10.0f
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let glyphs = result.Glyphs.ToArray()
@@ -413,6 +415,7 @@ module EdgeCases =
             Metrics    = metrics
             FontSizePx = 12.0f
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let upm    = float32 metrics.UnitsPerEm
@@ -440,6 +443,7 @@ module EdgeCases =
             Metrics    = metrics
             FontSizePx = 11.0f
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let glyphs = result.Glyphs.ToArray()

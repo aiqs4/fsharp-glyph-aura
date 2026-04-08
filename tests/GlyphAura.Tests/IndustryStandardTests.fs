@@ -39,6 +39,7 @@ let private runLayout (shape: ISdfShape) (text: string) (fontSize: float32) (mod
         Metrics    = metrics
         FontSizePx = fontSize
         Mode       = mode
+        Alignment  = Left
     }
     let result = layout req
     let glyphs = result.Glyphs.ToArray()
@@ -98,6 +99,7 @@ module ClusterMappingTests =
             Metrics    = metrics
             FontSizePx = 16.0f
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let glyphs = result.Glyphs.ToArray()
@@ -164,6 +166,7 @@ module AdvanceAccumulationTests =
             Metrics    = metrics
             FontSizePx = fontSize
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let glyphs = result.Glyphs.ToArray()
@@ -204,6 +207,7 @@ module AdvanceAccumulationTests =
                 Metrics    = metrics
                 FontSizePx = fontSize
                 Mode       = Flow
+                Alignment  = Left
             }
             let result = layout req
             let glyphs = result.Glyphs.ToArray()
@@ -353,6 +357,7 @@ module DrawListClusterTests =
             Metrics    = metrics
             FontSizePx = 16.0f
             Mode       = Flow
+            Alignment  = Left
         }
         let result = layout req
         let dl = fromLayoutResult result
@@ -437,6 +442,7 @@ type ClusterIndexProperties() =
                 Metrics    = metrics
                 FontSizePx = fs
                 Mode       = Flow
+                Alignment  = Left
             }
             let result = layout req
             let glyphs = result.Glyphs.ToArray()
@@ -467,6 +473,7 @@ type ClusterIndexProperties() =
                 Metrics    = metrics
                 FontSizePx = fs
                 Mode       = Flow
+                Alignment  = Left
             }
             let result = layout req
             let glyphs = result.Glyphs.ToArray()
