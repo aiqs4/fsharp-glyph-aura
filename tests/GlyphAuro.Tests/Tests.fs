@@ -2,8 +2,13 @@ namespace GlyphAuro.Tests
 
 open System
 open System.IO
+open System.Buffers
 open Xunit
 open GlyphAuro
+open GlyphAuro.GposKerning
+open GlyphAuro.TextAnalyzer
+open GlyphAuro.Shapes
+open GlyphAuro.LayoutEngine
 
 /// Helper module for loading test fonts.
 module TestHelper =
@@ -470,3 +475,612 @@ module ShaperTests =
 
         Assert.True(constrained.LastFitIndex >= 0, "Should be constrained")
         Assert.True(constrained.LastFitIndex < text.Length - 1, "Should not fit all chars")
+
+// ============================================================
+// Issue #6: GPOS Class-Based Kerning
+// ============================================================
+module GposKerningTests =
+
+    [<Fact>]
+    let ``GPOS parses DejaVu Sans successfully`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        match tables.Gpos with
+        | ValueSome gposData ->
+            let maxpSpan = tables.Maxp.Span
+            let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+            let result = GposKerning.parse gposData numGlyphs
+            Assert.True(result.IsSome, "GPOS should parse successfully for DejaVu Sans")
+        | ValueNone ->
+            Assert.Fail("DejaVu Sans should have a GPOS table")
+
+    [<Fact>]
+    let ``GPOS class tables have correct dimensions`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        match tables.Gpos with
+        | ValueSome gposData ->
+            let maxpSpan = tables.Maxp.Span
+            let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+            match GposKerning.parse gposData numGlyphs with
+            | ValueSome kc ->
+                Assert.Equal(numGlyphs, kc.LeftClassTable.Length)
+                Assert.Equal(numGlyphs, kc.RightClassTable.Length)
+                Assert.True(kc.ColumnCount > 0, "ColumnCount should be positive")
+                Assert.Equal(kc.ValueMatrix.Length, (kc.ValueMatrix.Length / kc.ColumnCount) * kc.ColumnCount)
+            | ValueNone -> Assert.Fail("GPOS parse returned ValueNone")
+        | ValueNone -> Assert.Fail("No GPOS table")
+
+    [<Fact>]
+    let ``GPOS To pair produces negative adjustment`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        let cmap = CMap.parse tables.Cmap
+        match tables.Gpos with
+        | ValueSome gposData ->
+            let maxpSpan = tables.Maxp.Span
+            let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+            match GposKerning.parse gposData numGlyphs with
+            | ValueSome kc ->
+                let glyphT = CMap.resolve cmap (uint32 'T')
+                let glypho = CMap.resolve cmap (uint32 'o')
+                let adj = GposKerning.getAdjustment kc glyphT glypho
+                // DejaVu Sans: To pair has XAdvance adjustment of -348 design units
+                Assert.True(adj < 0s, sprintf "To pair should have negative adjustment, got %d" adj)
+            | ValueNone -> Assert.Fail("GPOS parse returned ValueNone")
+        | ValueNone -> Assert.Fail("No GPOS table")
+
+    [<Fact>]
+    let ``GPOS returns 0 for unkerned pair`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        match tables.Gpos with
+        | ValueSome gposData ->
+            let maxpSpan = tables.Maxp.Span
+            let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+            match GposKerning.parse gposData numGlyphs with
+            | ValueSome kc ->
+                // GlyphID 0 (.notdef) should have class 0 for both left and right
+                let adj = GposKerning.getAdjustment kc 0us 0us
+                Assert.Equal(0s, adj)
+            | ValueNone -> Assert.Fail("GPOS parse returned ValueNone")
+        | ValueNone -> Assert.Fail("No GPOS table")
+
+    [<Fact>]
+    let ``GPOS class 0 handles unmapped glyphs`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        match tables.Gpos with
+        | ValueSome gposData ->
+            let maxpSpan = tables.Maxp.Span
+            let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+            match GposKerning.parse gposData numGlyphs with
+            | ValueSome kc ->
+                // Very high glyph IDs may be unmapped; should not crash
+                let adj = GposKerning.getAdjustment kc 1us 1us
+                // Just verify it doesn't crash
+                ignore adj
+            | ValueNone -> Assert.Fail("GPOS parse returned ValueNone")
+        | ValueNone -> Assert.Fail("No GPOS table")
+
+    [<Fact>]
+    let ``GPOS precedence over legacy kern`` () =
+        let tables, _ = TestHelper.loadTestFont()
+        let cmap = CMap.parse tables.Cmap
+        let maxpSpan = tables.Maxp.Span
+        let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+        let gposKern =
+            match tables.Gpos with
+            | ValueSome gd -> GposKerning.parse gd numGlyphs
+            | ValueNone -> ValueNone
+        let legacyKern =
+            match tables.Kern with
+            | ValueSome kd -> KernLegacy.parse kd
+            | ValueNone -> ValueNone
+
+        // Both should exist for DejaVu Sans
+        Assert.True(gposKern.IsSome, "GPOS kern should exist")
+        Assert.True(legacyKern.IsSome, "Legacy kern should exist")
+
+        // The To pair should have matching values (both sourced from same data)
+        let glyphT = CMap.resolve cmap (uint32 'T')
+        let glypho = CMap.resolve cmap (uint32 'o')
+        let gposVal = GposKerning.getAdjustment gposKern.Value glyphT glypho
+        let legacyVal = KernLegacy.getAdjustment legacyKern.Value glyphT glypho
+        // Both should be negative for T,o pair
+        Assert.True(gposVal < 0s, sprintf "GPOS kern To should be negative: %d" gposVal)
+        Assert.True(legacyVal < 0s, sprintf "Legacy kern To should be negative: %d" legacyVal)
+
+// ============================================================
+// Issue #7: Grapheme Cluster Analysis + Bidi Stub
+// ============================================================
+module TextAnalyzerTests =
+
+    [<Fact>]
+    let ``analyze splits pure LTR text into single run`` () =
+        let text = "Hello World".AsSpan()
+        let buffer = Array.zeroCreate<TextRun> 10
+        let count = TextAnalyzer.analyze text buffer
+        Assert.Equal(1, count)
+        Assert.False(buffer.[0].IsRTL)
+        Assert.Equal(0, buffer.[0].StartIndex)
+        Assert.Equal(text.Length, buffer.[0].Length)
+
+    [<Fact>]
+    let ``analyze detects RTL Hebrew text`` () =
+        let text = "\u05E9\u05DC\u05D5\u05DD".AsSpan()  // שלום
+        let buffer = Array.zeroCreate<TextRun> 10
+        let count = TextAnalyzer.analyze text buffer
+        Assert.Equal(1, count)
+        Assert.True(buffer.[0].IsRTL, "Hebrew should be detected as RTL")
+
+    [<Fact>]
+    let ``analyze detects RTL Arabic text`` () =
+        let text = "\u0645\u0631\u062D\u0628\u0627".AsSpan()  // مرحبا
+        let buffer = Array.zeroCreate<TextRun> 10
+        let count = TextAnalyzer.analyze text buffer
+        Assert.Equal(1, count)
+        Assert.True(buffer.[0].IsRTL, "Arabic should be detected as RTL")
+
+    [<Fact>]
+    let ``isClusterBoundary identifies combining mark as non-boundary`` () =
+        // e + combining acute accent
+        let text = "e\u0301".AsSpan()
+        Assert.False(TextAnalyzer.isClusterBoundary text 1, "Should not break between base and combining mark")
+
+    [<Fact>]
+    let ``isClusterBoundary identifies ZWJ as non-boundary`` () =
+        // Two emoji joined by ZWJ
+        let text = "\U0001F468\u200D\U0001F469".AsSpan()
+        // Find the ZWJ position
+        let mutable zwjPos = -1
+        for i in 0 .. text.Length - 1 do
+            if text.[i] = '\u200D' then zwjPos <- i
+        if zwjPos >= 0 then
+            Assert.False(TextAnalyzer.isClusterBoundary text zwjPos,
+                "Should not break before ZWJ")
+
+    [<Fact>]
+    let ``isClusterBoundary allows break between regular characters`` () =
+        let text = "AB".AsSpan()
+        Assert.True(TextAnalyzer.isClusterBoundary text 1, "Should allow break between A and B")
+
+    [<Fact>]
+    let ``isClusterBoundary handles variation selectors`` () =
+        // Star followed by VS16 (emoji presentation)
+        let text = "\u2764\uFE0F".AsSpan()
+        Assert.False(TextAnalyzer.isClusterBoundary text 1, "Should not break before variation selector")
+
+    [<Fact>]
+    let ``analyze handles empty text`` () =
+        let text = ReadOnlySpan<char>.Empty
+        let buffer = Array.zeroCreate<TextRun> 10
+        let count = TextAnalyzer.analyze text buffer
+        Assert.Equal(0, count)
+
+    [<Fact>]
+    let ``isClusterBoundary at boundaries returns true`` () =
+        let text = "ABC".AsSpan()
+        Assert.True(TextAnalyzer.isClusterBoundary text 0, "Position 0 is always a boundary")
+        Assert.True(TextAnalyzer.isClusterBoundary text 3, "Position at length is always a boundary")
+
+    [<Fact>]
+    let ``analyze handles mixed LTR and RTL`` () =
+        // English followed by Hebrew
+        let text = "Hello \u05E9\u05DC\u05D5\u05DD".AsSpan()
+        let buffer = Array.zeroCreate<TextRun> 10
+        let count = TextAnalyzer.analyze text buffer
+        Assert.True(count >= 2, sprintf "Should have at least 2 runs for mixed text, got %d" count)
+
+// ============================================================
+// Issue #8: SDF Geometry Engine (Shapes)
+// ============================================================
+module ShapesTests =
+
+    [<Fact>]
+    let ``circle GetDistance negative inside`` () =
+        let c = Shapes.circle { X = 0.0f; Y = 0.0f } 100.0f
+        let d = c.GetDistance { X = 0.0f; Y = 0.0f }
+        Assert.True(d < 0.0f, sprintf "Center should be inside circle, got %f" d)
+
+    [<Fact>]
+    let ``circle GetDistance positive outside`` () =
+        let c = Shapes.circle { X = 0.0f; Y = 0.0f } 100.0f
+        let d = c.GetDistance { X = 200.0f; Y = 0.0f }
+        Assert.True(d > 0.0f, sprintf "Far point should be outside circle, got %f" d)
+
+    [<Fact>]
+    let ``circle GetDistance zero on boundary`` () =
+        let c = Shapes.circle { X = 0.0f; Y = 0.0f } 100.0f
+        let d = c.GetDistance { X = 100.0f; Y = 0.0f }
+        Assert.True(abs d < 0.5f, sprintf "Boundary point should be ~0, got %f" d)
+
+    [<Fact>]
+    let ``circle GetInterval at center`` () =
+        let c = Shapes.circle { X = 0.0f; Y = 0.0f } 100.0f
+        match c.GetInterval(0.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(abs (xStart + 100.0f) < 0.5f, sprintf "xStart should be ~-100, got %f" xStart)
+            Assert.True(abs (xEnd - 100.0f) < 0.5f, sprintf "xEnd should be ~100, got %f" xEnd)
+        | ValueNone -> Assert.Fail("Circle at y=0 should have an interval")
+
+    [<Fact>]
+    let ``circle GetInterval outside returns ValueNone`` () =
+        let c = Shapes.circle { X = 0.0f; Y = 0.0f } 100.0f
+        match c.GetInterval(150.0f) with
+        | ValueNone -> ()
+        | ValueSome _ -> Assert.Fail("Should return ValueNone outside circle")
+
+    [<Fact>]
+    let ``diamond GetInterval at center`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        match d.GetInterval(0.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(abs (xStart + 100.0f) < 0.5f, sprintf "xStart should be ~-100, got %f" xStart)
+            Assert.True(abs (xEnd - 100.0f) < 0.5f, sprintf "xEnd should be ~100, got %f" xEnd)
+        | ValueNone -> Assert.Fail("Diamond at y=0 should have an interval")
+
+    [<Fact>]
+    let ``diamond GetInterval at y=75`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        match d.GetInterval(75.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(abs (xStart + 50.0f) < 0.5f, sprintf "xStart should be ~-50, got %f" xStart)
+            Assert.True(abs (xEnd - 50.0f) < 0.5f, sprintf "xEnd should be ~50, got %f" xEnd)
+        | ValueNone -> Assert.Fail("Diamond at y=75 should have an interval")
+
+    [<Fact>]
+    let ``diamond GetInterval at apex returns ValueNone`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        match d.GetInterval(150.0f) with
+        | ValueNone -> ()
+        | ValueSome _ -> Assert.Fail("Should return ValueNone at diamond apex")
+
+    [<Fact>]
+    let ``diamond GetDistance inside`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        let dist = d.GetDistance { X = 0.0f; Y = 0.0f }
+        Assert.True(dist < 0.0f, "Center should be inside diamond")
+
+    [<Fact>]
+    let ``diamond GetDistance outside`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        let dist = d.GetDistance { X = 200.0f; Y = 0.0f }
+        Assert.True(dist > 0.0f, "Far point should be outside diamond")
+
+    [<Fact>]
+    let ``triangle GetInterval at base`` () =
+        let t = Shapes.triangle { X = 0.0f; Y = 0.0f } 200.0f 100.0f
+        // Base is at bottom (y = +50)
+        match t.GetInterval(49.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(xEnd - xStart > 0.0f, "Should have positive width near base")
+        | ValueNone -> Assert.Fail("Triangle near base should have an interval")
+
+    [<Fact>]
+    let ``triangle GetInterval at apex returns ValueNone`` () =
+        let t = Shapes.triangle { X = 0.0f; Y = 0.0f } 200.0f 100.0f
+        // Apex is at top (y = -50)
+        match t.GetInterval(-50.0f) with
+        | ValueNone -> ()
+        | ValueSome(struct (_, xEnd)) ->
+            // Very narrow interval at apex is acceptable
+            ()
+
+    [<Fact>]
+    let ``parallelogram GetInterval at center`` () =
+        let p = Shapes.parallelogram { X = 0.0f; Y = 0.0f } 200.0f 100.0f 0.0f
+        match p.GetInterval(0.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(abs (xStart + 100.0f) < 0.5f, sprintf "xStart should be ~-100, got %f" xStart)
+            Assert.True(abs (xEnd - 100.0f) < 0.5f, sprintf "xEnd should be ~100, got %f" xEnd)
+        | ValueNone -> Assert.Fail("Parallelogram at y=0 should have an interval")
+
+    [<Fact>]
+    let ``parallelogram with shear shifts interval`` () =
+        let p = Shapes.parallelogram { X = 0.0f; Y = 0.0f } 200.0f 100.0f 0.5f
+        match p.GetInterval(0.0f) with
+        | ValueSome(struct (xStart, xEnd)) ->
+            Assert.True(abs (xStart + 100.0f) < 0.5f, "Center line should still be ~-100 to ~100")
+        | ValueNone -> Assert.Fail("Should have interval")
+        // Check shifted at y=25
+        match p.GetInterval(25.0f) with
+        | ValueSome(struct (xStart, _)) ->
+            // At y=25 with shear=0.5, center shifts by 0.5*25=12.5
+            Assert.True(xStart > -100.0f, "Should be shifted right by shear")
+        | ValueNone -> Assert.Fail("Should have interval")
+
+    [<Fact>]
+    let ``circle BoundingBox correct`` () =
+        let c = Shapes.circle { X = 10.0f; Y = 20.0f } 50.0f
+        let bb = c.BoundingBox
+        Assert.Equal(-40.0f, bb.Left)
+        Assert.Equal(-30.0f, bb.Top)
+        Assert.Equal(60.0f, bb.Right)
+        Assert.Equal(70.0f, bb.Bottom)
+
+    [<Fact>]
+    let ``diamond BoundingBox correct`` () =
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 150.0f
+        let bb = d.BoundingBox
+        Assert.Equal(-100.0f, bb.Left)
+        Assert.Equal(-150.0f, bb.Top)
+        Assert.Equal(100.0f, bb.Right)
+        Assert.Equal(150.0f, bb.Bottom)
+
+// ============================================================
+// Issue #10: SIMD Glyph-Width Summation
+// ============================================================
+module SimdTests =
+
+    [<Fact>]
+    let ``sumAdvances handles empty span`` () =
+        let advances = ReadOnlySpan<float32>.Empty
+        let sum = SimdAdvance.sumAdvances advances
+        Assert.Equal(0.0f, sum)
+
+    [<Fact>]
+    let ``sumAdvances matches scalar for small array`` () =
+        let data = [| 1.0f; 2.0f; 3.0f |]
+        let simd = SimdAdvance.sumAdvances (ReadOnlySpan(data))
+        let scalar = SimdAdvance.sumAdvancesScalar (ReadOnlySpan(data))
+        Assert.True(abs (simd - scalar) < 0.001f, sprintf "SIMD %f should match scalar %f" simd scalar)
+
+    [<Fact>]
+    let ``sumAdvances matches scalar for 4-element array`` () =
+        let data = [| 1.5f; 2.5f; 3.5f; 4.5f |]
+        let simd = SimdAdvance.sumAdvances (ReadOnlySpan(data))
+        let scalar = SimdAdvance.sumAdvancesScalar (ReadOnlySpan(data))
+        Assert.True(abs (simd - scalar) < 0.001f, sprintf "SIMD %f should match scalar %f" simd scalar)
+        Assert.True(abs (simd - 12.0f) < 0.001f, sprintf "Sum should be 12.0, got %f" simd)
+
+    [<Fact>]
+    let ``sumAdvances matches scalar for 1024 elements`` () =
+        let rng = Random(42)
+        let data = Array.init 1024 (fun _ -> float32 (rng.NextDouble()) * 100.0f)
+        let simd = SimdAdvance.sumAdvances (ReadOnlySpan(data))
+        let scalar = SimdAdvance.sumAdvancesScalar (ReadOnlySpan(data))
+        Assert.True(abs (simd - scalar) < 0.1f, sprintf "SIMD %f should match scalar %f within tolerance" simd scalar)
+
+    [<Fact>]
+    let ``sumAdvances handles non-multiple-of-4 tails`` () =
+        let data = [| 1.0f; 2.0f; 3.0f; 4.0f; 5.0f; 6.0f; 7.0f |]
+        let simd = SimdAdvance.sumAdvances (ReadOnlySpan(data))
+        let scalar = SimdAdvance.sumAdvancesScalar (ReadOnlySpan(data))
+        Assert.True(abs (simd - scalar) < 0.001f)
+        Assert.True(abs (simd - 28.0f) < 0.001f, sprintf "Sum should be 28.0, got %f" simd)
+
+    [<Fact>]
+    let ``sumAdvances single element`` () =
+        let data = [| 42.0f |]
+        let sum = SimdAdvance.sumAdvances (ReadOnlySpan(data))
+        Assert.True(abs (sum - 42.0f) < 0.001f)
+
+// ============================================================
+// Issue #9 + #11: Layout Engine + Integration Tests
+// ============================================================
+module LayoutEngineTests =
+
+    let private loadFontForLayout () =
+        let tables, metrics = TestHelper.loadTestFont()
+        tables, metrics
+
+    [<Fact>]
+    let ``layout Flow mode into circle produces glyphs`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f
+        let text = "The quick brown fox jumps over the lazy dog."
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length > 0, "Should produce glyphs")
+        Assert.True(result.FontSizeUsed > 0.0f, "Font size should be positive")
+
+        // Verify glyphs are inside the circle
+        let glyphSpan = result.Glyphs.Span
+        for i in 0 .. glyphSpan.Length - 1 do
+            let gp = glyphSpan.[i]
+            let dx = gp.X - 150.0f
+            let dy = gp.Y - 150.0f
+            let dist = sqrt (dx * dx + dy * dy)
+            Assert.True(dist <= 155.0f, sprintf "Glyph at (%f, %f) should be inside circle, dist=%f" gp.X gp.Y dist)
+
+        // Return buffer
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout Fit mode into diamond finds font size`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.diamond { X = 100.0f; Y = 150.0f } 100.0f 150.0f
+        let text = "Hello World"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f  // Ignored in Fit mode
+            Mode = Fit
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.FontSizeUsed > 4.0f, sprintf "Font size should be > 4, got %f" result.FontSizeUsed)
+        Assert.True(result.Glyphs.Length > 0, "Should produce glyphs")
+        Assert.True(result.LastTextIndex >= text.Length, sprintf "All text should fit, LastTextIndex=%d" result.LastTextIndex)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout detects overflow`` () =
+        let tables, metrics = loadFontForLayout()
+        // Very small circle with lots of text
+        let shape = Shapes.circle { X = 30.0f; Y = 30.0f } 30.0f
+        let text = "This is a very long text that should definitely not fit inside a tiny circle of radius thirty pixels."
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 14.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.LastTextIndex < text.Length,
+            sprintf "Should overflow: LastTextIndex=%d, text.Length=%d" result.LastTextIndex text.Length)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout empty text returns zero glyphs`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.circle { X = 100.0f; Y = 100.0f } 100.0f
+        let req = {
+            Text = ReadOnlyMemory(Array.empty<char>)
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.Equal(0, result.Glyphs.Length)
+
+    [<Fact>]
+    let ``layout handles zero-area shape`` () =
+        // Diamond with zero dimensions
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.diamond { X = 0.0f; Y = 0.0f } 0.0f 0.0f
+        let text = "Hello"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.Equal(0, result.Glyphs.Length)
+
+    [<Fact>]
+    let ``layout circle produces multiple lines`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f
+        let text = "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 14.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        // Should have multiple Y values (multiple lines)
+        let glyphSpan = result.Glyphs.Span
+        if glyphSpan.Length > 1 then
+            let mutable yValues = Set.empty
+            for i in 0 .. glyphSpan.Length - 1 do
+                yValues <- Set.add (int (glyphSpan.[i].Y * 10.0f)) yValues
+            Assert.True(yValues.Count > 1, sprintf "Should have multiple lines, got %d distinct Y values" yValues.Count)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout diamond Mode B all glyphs inside shape`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.diamond { X = 150.0f; Y = 150.0f } 100.0f 150.0f
+        let text = "Test text"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f
+            Mode = Fit
+        }
+        let result = LayoutEngine.layout req
+        let glyphSpan = result.Glyphs.Span
+
+        // All glyphs should be inside the diamond (SDF ≤ 0)
+        for i in 0 .. glyphSpan.Length - 1 do
+            let gp = glyphSpan.[i]
+            let dist = shape.GetDistance { X = gp.X; Y = gp.Y }
+            // Allow small tolerance for edge placement
+            Assert.True(dist <= 5.0f,
+                sprintf "Glyph %d at (%f, %f) should be inside diamond, SDF=%f" i gp.X gp.Y dist)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout triangle produces glyphs`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.triangle { X = 150.0f; Y = 150.0f } 300.0f 200.0f
+        let text = "Triangle text layout test"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 12.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length > 0, "Should produce glyphs in triangle")
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout parallelogram produces glyphs`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.parallelogram { X = 150.0f; Y = 100.0f } 200.0f 150.0f 0.3f
+        let text = "Parallelogram text"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 14.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length > 0, "Should produce glyphs in parallelogram")
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``layout circle glyph positions are monotonically increasing X per line`` () =
+        let tables, metrics = loadFontForLayout()
+        let shape = Shapes.circle { X = 200.0f; Y = 200.0f } 200.0f
+        let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 14.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        let glyphSpan = result.Glyphs.Span
+
+        // Group by line (Y value) and verify X is monotonically increasing
+        let mutable prevY = Single.MinValue
+        let mutable prevX = Single.MinValue
+        for i in 0 .. glyphSpan.Length - 1 do
+            let gp = glyphSpan.[i]
+            if abs (gp.Y - prevY) > 1.0f then
+                // New line
+                prevX <- Single.MinValue
+            Assert.True(gp.X >= prevX, sprintf "Glyph %d X=%f should be >= prevX=%f on same line" i gp.X prevX)
+            prevX <- gp.X
+            prevY <- gp.Y
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)

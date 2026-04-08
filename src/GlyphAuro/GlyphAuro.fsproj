@@ -12,7 +12,12 @@
     <Compile Include="CMap.fs" />
     <Compile Include="Hmtx.fs" />
     <Compile Include="KernLegacy.fs" />
+    <Compile Include="GposKerning.fs" />
+    <Compile Include="TextAnalyzer.fs" />
     <Compile Include="Shaper.fs" />
+    <Compile Include="Shapes.fs" />
+    <Compile Include="SimdAdvance.fs" />
+    <Compile Include="LayoutEngine.fs" />
   </ItemGroup>
 
 </Project>
