@@ -27,14 +27,32 @@ let private printBanner (title: string) =
     printfn "└%s┘" line
 
 /// Render a DrawList onto a character grid at the given scale.
-/// The shape boundary is drawn with block characters.
+/// The shape boundary is drawn with '|' characters.
+///
+/// Fix: shape boundary for each canvas row is drawn at the same Y that the
+/// layout engine used for that row's baseline.  Previously a uniform Y grid
+/// was used, which caused glyphs to appear outside the boundary when the
+/// uniform Y differed from the actual baseline Y.
 let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) (text: string) =
     let canvas = Array2D.create canvasH canvasW ' '
     let bb = shape.BoundingBox
 
-    // Draw shape boundary with '·'
+    // Build a per-row Y table.  Default: uniform spacing through the bounding box.
+    // Rows that contain glyphs are overridden with the glyph's actual baseline Y so
+    // that the shape boundary is queried at exactly the same scanline that the layout
+    // engine used — eliminating the visual artefact of characters outside the edge.
+    let rowY = Array.init canvasH (fun row ->
+        bb.Top + float32 row * (bb.Height / float32 canvasH))
+
+    for i in 0 .. dl.GlyphCount - 1 do
+        let py = dl.YPositions.[i]
+        let row = int (float32 canvasH * (py - bb.Top) / bb.Height)
+        if row >= 0 && row < canvasH then
+            rowY.[row] <- py   // anchor to actual baseline
+
+    // Draw shape boundary at the consistent per-row Y values
     for row in 0 .. canvasH - 1 do
-        let y = bb.Top + float32 row * (bb.Height / float32 canvasH)
+        let y = rowY.[row]
         match shape.GetInterval y with
         | ValueNone -> ()
         | ValueSome(struct (xs, xe)) ->
@@ -44,7 +62,6 @@ let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) 
             if rx >= 0 && rx < canvasW then canvas.[row, min (canvasW - 1) rx] <- '|'
 
     // Place glyphs (use source text chars when available)
-    // Match glyph index to source character
     let srcChars = text.ToCharArray()
     let mutable charIdx = 0
 
@@ -57,7 +74,6 @@ let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) 
         let row = int (float32 canvasH * (py - bb.Top) / bb.Height)
 
         if row >= 0 && row < canvasH && col >= 0 && col < canvasW then
-            // Use the source character if in range
             let ch =
                 if charIdx < srcChars.Length && srcChars.[charIdx] <> ' ' then
                     srcChars.[charIdx]
@@ -205,6 +221,24 @@ let main _ =
 
         // ── Scene 6: Cache benchmark ──────────────────────────────────────
         runCacheDemo tables metrics
+
+        // ── Scene 7: PNG renders ──────────────────────────────────────
+        printBanner "PNG Renders (SkiaSharp)"
+        // Go 5 levels up from net10.0/bin/Release/GlyphAuro.Demo/demo → repo root
+        let outDir =
+            Path.GetFullPath(
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "demo", "output"))
+        Directory.CreateDirectory(outDir) |> ignore
+        printfn "  Output directory: %s" outDir
+        let pngResults = PngDemo.runAll tables metrics outDir
+        for (desc, path) in pngResults do
+            printfn "  ✓ %s → %s" desc (Path.GetFileName(path))
+
+        // ── Scene 8: SVG renders ──────────────────────────────────────
+        printBanner "SVG Renders"
+        let svgResults = SvgDemo.runAll tables metrics outDir
+        for (desc, path) in svgResults do
+            printfn "  ✓ %s → %s" desc (Path.GetFileName(path))
 
         printfn ""
         printfn "  ✓ All demos complete. Ready for SceneGraph integration."

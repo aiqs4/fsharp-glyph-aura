@@ -103,12 +103,51 @@ printfn "%d glyphs placed" dl.GlyphCount
 
 ---
 
-## Demo — ASCII Rendering
+## Demo — Rendering Outputs
 
-Running `dotnet run --project demo/GlyphAuro.Demo` produces live renders of all
-four supported shapes. Below are examples from an actual run on DejaVu Sans:
+Running `dotnet run --project demo/GlyphAuro.Demo` produces live renders in three
+formats: **ASCII art** (terminal), **PNG** (SkiaSharp bitmap), and **SVG** (vector).
+All rendered output is saved to `demo/output/`.
 
-### Circle — Flow mode (14 px)
+### PNG Renders (SkiaSharp)
+
+High-fidelity raster renders that verify pixel-perfect glyph placement, baseline
+alignment and kerning.  The **green dashed lines** are baselines; the **blue
+polylines** are the SDF shape boundary; the **orange band** is the cap-height zone.
+
+| Circle — Flow 14 px | Circle — Fit (auto-size) |
+|---|---|
+| ![circle_flow](demo/output/circle_flow.png) | ![circle_fit](demo/output/circle_fit.png) |
+
+| Diamond — Flow 12 px | Triangle — Flow 12 px |
+|---|---|
+| ![diamond_flow](demo/output/diamond_flow.png) | ![triangle_flow](demo/output/triangle_flow.png) |
+
+| Parallelogram shear=0.4 | Kerning test — VA Te AV To |
+|---|---|
+| ![parallelogram_flow](demo/output/parallelogram_flow.png) | ![kerning_test](demo/output/kerning_test.png) |
+
+The kerning test renders common tight pairs at 72 px.  Even horizontal spacing
+between the two characters confirms that GPOS class-based kerning is applied
+correctly (e.g. V→A is pulled together by −348 design units in DejaVu Sans).
+
+### SVG Renders (vector)
+
+Scalable vector output for inspecting curve fidelity at any zoom level.  Zoom in
+to verify that shape boundaries are smooth polylines (not staircase approximations).
+
+| Circle Flow SVG | Kerning Test SVG |
+|---|---|
+| ![circle_flow_svg](demo/output/circle_flow.svg) | ![kerning_test_svg](demo/output/kerning_test.svg) |
+
+### ASCII Rendering (terminal)
+
+The fixed ASCII art correctly places every glyph character *inside* the shape
+boundary `|`.  Previously a uniform-Y grid was used to draw the boundary, which
+caused a visual artefact where characters appeared outside the edge; the boundary
+is now anchored to each row's actual baseline Y from the layout engine.
+
+#### Circle — Flow mode (14 px)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -120,8 +159,8 @@ four supported shapes. Below are examples from an actual run on DejaVu Sans:
   Overflow       : none
 
                      T h e ·q u ic k ·b r o w n   |
-              ·f|o x·j u   m p s· o v er·t  h e·l a z  |
-          y · d o
+              ·f o x·j u   m p s· o v er·t  h e·l a z    |
+          y · d o                                            |
          |                                                    |
       |                                                          |
     |                                                              |
@@ -131,11 +170,11 @@ four supported shapes. Below are examples from an actual run on DejaVu Sans:
 |                                                                      |
 ```
 
-### Circle — Fit mode (auto font size)
+#### Circle — Fit mode (auto font size)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 (Fit) — Hello, World! GlyphAuro                              │
+│  Circle r=150 (Fit) — Hello, World! GlyphAuro (14px, Fit)                  │
 └────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 19 / 23 source chars
   Font size used : 64.8 px   ← binary-searched to fill the circle
@@ -143,14 +182,14 @@ four supported shapes. Below are examples from an actual run on DejaVu Sans:
 
                      |                            |
                 |                                      |
-       H |        e         l   l    o        ,
+       H          e         l   l    o        ,                 |
       |                                                          |
     |                                                              |
 ·              W        o     r   l         d                          |
-|  !           ·   G        l         y                              |
+   !           ·   G        l         y                             |
 ```
 
-### Diamond — Flow mode (12 px)
+#### Diamond — Flow mode (12 px)
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
@@ -158,16 +197,17 @@ four supported shapes. Below are examples from an actual run on DejaVu Sans:
 └───────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 41 / 44 source chars
 
-                                 T
-                             h|e          |
-                          ·|q uic k· bro  w  |
+                                 T    |
+                                 |     |
+                             h e          |
+                          · q uic k· bro  w  |
                        n· fox· j  um ps ·o v    |
-                   e r· the ·l az y· d             |
+                   e r· the ·l az y· d              |
                   |                                   |
               |                                          |
 ```
 
-### Triangle — Flow mode (12 px)
+#### Triangle — Flow mode (12 px)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
@@ -175,37 +215,39 @@ four supported shapes. Below are examples from an actual run on DejaVu Sans:
 └────────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 40 / 44 source chars
 
-                                 T|  |
+                                 T    |
+                                 |     |
                                h e      |
-                            · q ui c      |
-                          k|·b r o wn· f     |
+                            · q ui c       |
+                            |              |
+                          k ·b r o wn· f     |
                        ox ·  j ump s ·o e r·    |
-                     the · laz y ·               |
+                     the · laz y ·                |
 ```
 
-### Parallelogram — Flow mode (12 px, shear = 0.4)
+#### Parallelogram — Flow mode (12 px, shear = 0.4)
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Parallelogram 250×180 shear=0.4 — The quick brown fox… (12px, Flow)                          │
+│  Parallelogram 250×180 shear=0.4 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 43 / 44 source chars
 
 |                                                      |
 T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
  |                                                       |
-  ·d o g                                                 |
+  ·d o g                                                  |
 ```
 
-### TextNode Cache Demo
+#### TextNode Cache Demo
 
 ```
 ┌───────────────────────┐
 │  TextNode Cache Demo  │
 └───────────────────────┘
-  First render  : 330 µs  (17 glyphs)
-  Cached render :   0 µs  (17 glyphs, cache hit)   ← 23 000× speedup
-  After setText : 621 µs  (12 glyphs)
+  First render  : 1568 µs  (17 glyphs)
+  Cached render :    0 µs  (17 glyphs, cache hit)   ← 7 800× speedup
+  After setText :  279 µs  (12 glyphs)
 ```
 
 ---
