@@ -18,6 +18,8 @@ module DrawList =
         XPositions: float32 array
         /// Y positions in pixel coordinates, origin top-left.
         YPositions: float32 array
+        /// Source text char index for each placed glyph (absolute position in original text).
+        ClusterIndices: int array
         /// Tight bounding box encompassing only placed glyphs.
         TightBounds: Rectangle
         /// Deduplicated, sorted list of GlyphIDs the renderer must have in the atlas.
@@ -31,6 +33,7 @@ module DrawList =
         GlyphIds = Array.empty
         XPositions = Array.empty
         YPositions = Array.empty
+        ClusterIndices = Array.empty
         TightBounds = { Left = 0.0f; Top = 0.0f; Right = 0.0f; Bottom = 0.0f }
         GlyphRasterRequests = Array.empty
         GlyphCount = 0
@@ -46,6 +49,7 @@ module DrawList =
         let ids = Array.zeroCreate<uint16> count
         let xs = Array.zeroCreate<float32> count
         let ys = Array.zeroCreate<float32> count
+        let ci = Array.zeroCreate<int> count
 
         let mutable minX = Single.MaxValue
         let mutable minY = Single.MaxValue
@@ -62,6 +66,7 @@ module DrawList =
             ids.[i] <- gp.GlyphId
             xs.[i] <- gp.X
             ys.[i] <- gp.Y
+            ci.[i] <- gp.ClusterIndex
 
             if gp.X < minX then minX <- gp.X
             if gp.Y < minY then minY <- gp.Y
@@ -96,6 +101,7 @@ module DrawList =
             GlyphIds = ids
             XPositions = xs
             YPositions = ys
+            ClusterIndices = ci
             TightBounds = { Left = minX; Top = minY; Right = maxX; Bottom = maxY }
             GlyphRasterRequests = rasterRequests
             GlyphCount = count

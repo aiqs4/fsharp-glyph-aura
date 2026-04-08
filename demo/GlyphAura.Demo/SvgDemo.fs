@@ -119,15 +119,14 @@ let private buildSvg
 
     // Glyph characters at their layout positions
     let srcChars  = srcText.ToCharArray()
-    let mutable charIdx = 0
     for i in 0 .. dl.GlyphCount - 1 do
         let x  = dl.XPositions.[i]
         let y  = dl.YPositions.[i]
-        let ch = if charIdx < srcChars.Length then srcChars.[charIdx] else '?'
+        let ci = dl.ClusterIndices.[i]
+        let ch = if ci >= 0 && ci < srcChars.Length then srcChars.[ci] else '?'
         sb.Append(sprintf
             "  <text x=\"%.2f\" y=\"%.2f\" font-family=\"DejaVu Sans,Arial,sans-serif\" font-size=\"%.1f\" fill=\"%s\">%s</text>\n"
             x y fontSizePx glyphFill (xmlEscape ch)) |> ignore
-        charIdx <- charIdx + 1
 
     sb.Append("  </g>\n") |> ignore
 
@@ -187,15 +186,14 @@ let private buildKerningSvg (tables: FontTables) (metrics: FontMetrics) : string
 
         // Glyphs
         let srcChars  = pair.ToCharArray()
-        let mutable charIdx = 0
         for i in 0 .. dl.GlyphCount - 1 do
             let x  = dl.XPositions.[i]
             let y  = dl.YPositions.[i]
-            let ch = if charIdx < srcChars.Length then srcChars.[charIdx] else '?'
+            let ci = dl.ClusterIndices.[i]
+            let ch = if ci >= 0 && ci < srcChars.Length then srcChars.[ci] else '?'
             sb.Append(sprintf
                 "  <text x=\"%.2f\" y=\"%.2f\" font-family=\"DejaVu Sans,Arial,sans-serif\" font-size=\"%.1f\" fill=\"%s\">%s</text>\n"
                 x y fontSize glyphTestFill (xmlEscape ch)) |> ignore
-            charIdx <- charIdx + 1
 
         // Pair label
         sb.Append(sprintf

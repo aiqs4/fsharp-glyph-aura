@@ -61,13 +61,13 @@ let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) 
             if lx >= 0 && lx < canvasW then canvas.[row, lx] <- '|'
             if rx >= 0 && rx < canvasW then canvas.[row, min (canvasW - 1) rx] <- '|'
 
-    // Place glyphs (use source text chars when available)
+    // Place glyphs (use source text chars via ClusterIndex for correct mapping)
     let srcChars = text.ToCharArray()
-    let mutable charIdx = 0
 
     for i in 0 .. dl.GlyphCount - 1 do
         let px = dl.XPositions.[i]
         let py = dl.YPositions.[i]
+        let ci = dl.ClusterIndices.[i]
 
         // Map to canvas coordinates
         let col = int (float32 canvasW * (px - bb.Left) / bb.Width)
@@ -75,13 +75,12 @@ let renderAscii (dl: DrawList) (shape: ISdfShape) (canvasW: int) (canvasH: int) 
 
         if row >= 0 && row < canvasH && col >= 0 && col < canvasW then
             let ch =
-                if charIdx < srcChars.Length && srcChars.[charIdx] <> ' ' then
-                    srcChars.[charIdx]
-                elif charIdx < srcChars.Length then
+                if ci >= 0 && ci < srcChars.Length && srcChars.[ci] <> ' ' then
+                    srcChars.[ci]
+                elif ci >= 0 && ci < srcChars.Length then
                     '·'
                 else '·'
             canvas.[row, col] <- ch
-            charIdx <- charIdx + 1
 
     // Print
     for row in 0 .. canvasH - 1 do

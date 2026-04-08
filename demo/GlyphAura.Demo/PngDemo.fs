@@ -119,14 +119,13 @@ let private drawScene
     paint.Style       <- SKPaintStyle.Fill
 
     let srcChars  = srcText.ToCharArray()
-    let mutable charIdx = 0
     for i in 0 .. dl.GlyphCount - 1 do
         let x  = dl.XPositions.[i]
         let y  = dl.YPositions.[i]
-        let ch = if charIdx < srcChars.Length then string srcChars.[charIdx] else "?"
+        let ci = dl.ClusterIndices.[i]
+        let ch = if ci >= 0 && ci < srcChars.Length then string srcChars.[ci] else "?"
         if ch <> " " then
             canvas.DrawText(ch, x, y, SKTextAlign.Left, font, paint)
-        charIdx <- charIdx + 1
 
 // ── Scene renderer ───────────────────────────────────────────────────────────
 
@@ -237,13 +236,12 @@ let private renderKerningTest
 
         // Glyphs
         let srcChars  = pair.ToCharArray()
-        let mutable charIdx = 0
         for i in 0 .. dl.GlyphCount - 1 do
             let x  = dl.XPositions.[i]
             let y  = dl.YPositions.[i]
-            let ch = if charIdx < srcChars.Length then string srcChars.[charIdx] else "?"
+            let ci = dl.ClusterIndices.[i]
+            let ch = if ci >= 0 && ci < srcChars.Length then string srcChars.[ci] else "?"
             canvas.DrawText(ch, x, y, SKTextAlign.Left, font, glyphPaint)
-            charIdx <- charIdx + 1
 
         // Label
         canvas.DrawText(pair, ox + shapeW * 0.5f - 8.0f, float32 h - 8.0f, SKTextAlign.Left, labelFont, labelPaint)

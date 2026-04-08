@@ -21,6 +21,10 @@ module LayoutEngine =
         GlyphId: uint16
         X: float32
         Y: float32
+        /// Index of this glyph's source character in the original text (char-space).
+        /// For BMP codepoints this equals the char index; for surrogate pairs it is
+        /// the index of the high surrogate.  Matches HarfBuzz "cluster" semantics.
+        ClusterIndex: int
     }
 
     /// Input to the layout engine.
@@ -155,7 +159,7 @@ module LayoutEngine =
                         let g = shapeBuf.[i]
                         // Glyph origin is simply the current pen position.
                         // (kern to the next glyph is already included in the advance.)
-                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y }
+                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y; ClusterIndex = g.ClusterIndex }
                         x <- x + correctedAdvance i (min breakIdx result.GlyphCount)
                         glyphsPlaced <- glyphsPlaced + 1
 
@@ -170,7 +174,7 @@ module LayoutEngine =
                     if outIdx + glyphsPlaced < buffer.Length then
                         let g = shapeBuf.[i]
                         // Glyph origin is simply the current pen position.
-                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y }
+                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y; ClusterIndex = g.ClusterIndex }
                         x <- x + correctedAdvance i result.GlyphCount
                         glyphsPlaced <- glyphsPlaced + 1
                 charsConsumed <- text.Length
@@ -273,6 +277,12 @@ module LayoutEngine =
             | ValueSome(struct (xStart, xEnd)) ->
                 let remaining = text.Slice(textIdx)
                 let struct (glyphsPlaced, charsConsumed) = layoutLine remaining fd scale xStart xEnd y buffer outIdx
+
+                // Adjust ClusterIndex to absolute position in the original text.
+                // layoutLine sets ClusterIndex relative to the text slice — add textIdx.
+                for i in outIdx .. outIdx + glyphsPlaced - 1 do
+                    let gp = buffer.[i]
+                    buffer.[i] <- { gp with ClusterIndex = gp.ClusterIndex + textIdx }
 
                 // Update bounds
                 for i in outIdx .. outIdx + glyphsPlaced - 1 do
