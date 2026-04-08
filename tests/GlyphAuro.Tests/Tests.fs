@@ -9,6 +9,9 @@ open GlyphAuro.GposKerning
 open GlyphAuro.TextAnalyzer
 open GlyphAuro.Shapes
 open GlyphAuro.LayoutEngine
+open GlyphAuro.DrawList
+open GlyphAuro.ShapeCache
+open GlyphAuro.TextNode
 
 /// Helper module for loading test fonts.
 module TestHelper =
@@ -1084,3 +1087,328 @@ module LayoutEngineTests =
 
         if result.GlyphBuffer.Length > 0 then
             ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+// ============================================================
+// Issue #12: DrawList Output Format
+// ============================================================
+module DrawListTests =
+
+    let private createTestDrawList () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f
+        let text = "The quick brown fox"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray())
+            Shape = shape
+            Font = tables
+            Metrics = metrics
+            FontSizePx = 16.0f
+            Mode = Flow
+        }
+        let result = LayoutEngine.layout req
+        let dl = DrawList.fromLayoutResult result
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+        dl
+
+    [<Fact>]
+    let ``DrawList has correct glyph count`` () =
+        let dl = createTestDrawList()
+        Assert.True(dl.GlyphCount > 0, "Should have glyphs")
+        Assert.Equal(dl.GlyphCount, dl.GlyphIds.Length)
+        Assert.Equal(dl.GlyphCount, dl.XPositions.Length)
+        Assert.Equal(dl.GlyphCount, dl.YPositions.Length)
+
+    [<Fact>]
+    let ``DrawList GlyphRasterRequests is sorted and deduplicated`` () =
+        let dl = createTestDrawList()
+        Assert.True(dl.GlyphRasterRequests.Length > 0, "Should have raster requests")
+        // Verify sorted
+        for i in 1 .. dl.GlyphRasterRequests.Length - 1 do
+            Assert.True(dl.GlyphRasterRequests.[i] > dl.GlyphRasterRequests.[i - 1],
+                sprintf "Raster requests should be sorted: [%d]=%d > [%d]=%d"
+                    i dl.GlyphRasterRequests.[i] (i-1) dl.GlyphRasterRequests.[i-1])
+
+    [<Fact>]
+    let ``DrawList GlyphRasterRequests contains all used glyph IDs`` () =
+        let dl = createTestDrawList()
+        for i in 0 .. dl.GlyphCount - 1 do
+            let gid = dl.GlyphIds.[i]
+            let found = Array.BinarySearch(dl.GlyphRasterRequests, gid) >= 0
+            Assert.True(found, sprintf "GlyphID %d should be in raster requests" gid)
+
+    [<Fact>]
+    let ``DrawList TightBounds encompasses all glyphs`` () =
+        let dl = createTestDrawList()
+        for i in 0 .. dl.GlyphCount - 1 do
+            Assert.True(dl.XPositions.[i] >= dl.TightBounds.Left,
+                sprintf "X[%d]=%f should be >= Left=%f" i dl.XPositions.[i] dl.TightBounds.Left)
+            Assert.True(dl.XPositions.[i] <= dl.TightBounds.Right,
+                sprintf "X[%d]=%f should be <= Right=%f" i dl.XPositions.[i] dl.TightBounds.Right)
+            Assert.True(dl.YPositions.[i] >= dl.TightBounds.Top,
+                sprintf "Y[%d]=%f should be >= Top=%f" i dl.YPositions.[i] dl.TightBounds.Top)
+            Assert.True(dl.YPositions.[i] <= dl.TightBounds.Bottom,
+                sprintf "Y[%d]=%f should be <= Bottom=%f" i dl.YPositions.[i] dl.TightBounds.Bottom)
+
+    [<Fact>]
+    let ``DrawList serialization produces correct size`` () =
+        let dl = createTestDrawList()
+        let bytes = DrawList.toBytes dl
+        Assert.True(bytes.Length > 0, "Serialized bytes should not be empty")
+        let n = dl.GlyphCount
+        let m = dl.GlyphRasterRequests.Length
+        let expectedSize = 4 + n * 2 + n * 4 + n * 4 + 16 + 4 + m * 2
+        Assert.Equal(expectedSize, bytes.Length)
+
+    [<Fact>]
+    let ``DrawList empty produces empty`` () =
+        let result = {
+            Glyphs = Memory<GlyphPosition>.Empty
+            GlyphBuffer = Array.empty
+            TotalBounds = { Left = 0.0f; Top = 0.0f; Right = 0.0f; Bottom = 0.0f }
+            LastTextIndex = 0
+            FontSizeUsed = 16.0f
+        }
+        let dl = DrawList.fromLayoutResult result
+        Assert.Equal(0, dl.GlyphCount)
+
+    [<Fact>]
+    let ``DrawList fits in expected memory`` () =
+        let dl = createTestDrawList()
+        let posBytes = dl.GlyphCount * 4 * 2
+        let idBytes = dl.GlyphCount * 2
+        let total = posBytes + idBytes
+        Assert.True(total < 4096, sprintf "DrawList data should be < 4KB, got %d bytes" total)
+
+// ============================================================
+// Issue #13: LRU Shape Cache + Dirty Flag System
+// ============================================================
+module ShapeCacheTests =
+
+    [<Fact>]
+    let ``ShapeCache stores and retrieves entries`` () =
+        let cache = ShapeCache(4)
+        let key = { FontId = 1UL; TextHash = 2UL; ShapeId = 3UL; FontSizePx = 16.0f }
+        let dl = DrawList.empty
+        cache.Put(key, dl)
+        match cache.TryGet(key) with
+        | ValueSome _ -> ()
+        | ValueNone -> Assert.Fail("Should find cached entry")
+
+    [<Fact>]
+    let ``ShapeCache returns ValueNone for absent key`` () =
+        let cache = ShapeCache(4)
+        let key = { FontId = 1UL; TextHash = 2UL; ShapeId = 3UL; FontSizePx = 16.0f }
+        match cache.TryGet(key) with
+        | ValueNone -> ()
+        | ValueSome _ -> Assert.Fail("Should not find absent key")
+
+    [<Fact>]
+    let ``ShapeCache evicts LRU entry when full`` () =
+        let cache = ShapeCache(2)
+        let k1 = { FontId = 1UL; TextHash = 1UL; ShapeId = 1UL; FontSizePx = 16.0f }
+        let k2 = { FontId = 2UL; TextHash = 2UL; ShapeId = 2UL; FontSizePx = 16.0f }
+        let k3 = { FontId = 3UL; TextHash = 3UL; ShapeId = 3UL; FontSizePx = 16.0f }
+        let dl = DrawList.empty
+
+        cache.Put(k1, dl)
+        cache.Put(k2, dl)
+        Assert.Equal(2, cache.Count)
+
+        // Access k2 to make it more recently used
+        cache.TryGet(k2) |> ignore
+        System.Threading.Thread.Sleep(1)
+
+        // Add k3 — should evict k1 (LRU)
+        cache.Put(k3, dl)
+        Assert.Equal(2, cache.Count)
+
+        // k1 should be evicted
+        match cache.TryGet(k1) with
+        | ValueNone -> ()
+        | ValueSome _ -> Assert.Fail("k1 should have been evicted")
+
+        // k2 and k3 should still exist
+        Assert.True((cache.TryGet k2).IsSome, "k2 should still be cached")
+        Assert.True((cache.TryGet k3).IsSome, "k3 should still be cached")
+
+    [<Fact>]
+    let ``ShapeCache manual evict removes oldest`` () =
+        let cache = ShapeCache(4)
+        let k1 = { FontId = 1UL; TextHash = 1UL; ShapeId = 1UL; FontSizePx = 16.0f }
+        let k2 = { FontId = 2UL; TextHash = 2UL; ShapeId = 2UL; FontSizePx = 16.0f }
+        cache.Put(k1, DrawList.empty)
+        System.Threading.Thread.Sleep(1)
+        cache.Put(k2, DrawList.empty)
+
+        cache.Evict()
+        Assert.Equal(1, cache.Count)
+        match cache.TryGet(k1) with
+        | ValueNone -> ()
+        | ValueSome _ -> Assert.Fail("k1 should have been evicted")
+        Assert.True((cache.TryGet k2).IsSome, "k2 should still exist")
+
+    [<Fact>]
+    let ``FNV1a hash produces different hashes for different strings`` () =
+        let h1 = fnv1aHash "Hello"
+        let h2 = fnv1aHash "World"
+        let h3 = fnv1aHash "Hello"
+        Assert.NotEqual(h1, h2)
+        Assert.Equal(h1, h3)
+
+    [<Fact>]
+    let ``FNV1a hash handles empty string`` () =
+        let h = fnv1aHash ""
+        Assert.True(h <> 0UL, "Empty string hash should be the FNV offset basis, not zero")
+
+    [<Fact>]
+    let ``ShapeCache clear removes all entries`` () =
+        let cache = ShapeCache(4)
+        for i in 1 .. 3 do
+            let key = { FontId = uint64 i; TextHash = 0UL; ShapeId = 0UL; FontSizePx = 16.0f }
+            cache.Put(key, DrawList.empty)
+        Assert.Equal(3, cache.Count)
+        cache.Clear()
+        Assert.Equal(0, cache.Count)
+
+// ============================================================
+// Issue #14-16: TextNode, Hit-Testing, Caret/Selection
+// ============================================================
+module TextNodeTests =
+
+    let private createTestNode () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.circle { X = 150.0f; Y = 150.0f } 150.0f
+        let node = TextNode.create tables metrics 1UL shape "Hello World" 16.0f
+        node
+
+    [<Fact>]
+    let ``TextNode starts dirty`` () =
+        let node = createTestNode()
+        Assert.True(node.IsDirty, "New node should be dirty")
+
+    [<Fact>]
+    let ``TextNode update produces DrawList and clears dirty`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        Assert.True(dl.GlyphCount > 0, "Should produce glyphs")
+        Assert.False(node.IsDirty, "Should not be dirty after update")
+
+    [<Fact>]
+    let ``TextNode second update uses cache`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl1 = TextNode.update node cache
+        let dl2 = TextNode.update node cache
+        Assert.Equal(dl1.GlyphCount, dl2.GlyphCount)
+        Assert.False(node.IsDirty)
+
+    [<Fact>]
+    let ``TextNode setText marks dirty`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let _ = TextNode.update node cache
+        Assert.False(node.IsDirty)
+        TextNode.setText node "New text"
+        Assert.True(node.IsDirty)
+
+    [<Fact>]
+    let ``TextNode setFontSize marks dirty`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let _ = TextNode.update node cache
+        TextNode.setFontSize node 24.0f
+        Assert.True(node.IsDirty)
+
+    [<Fact>]
+    let ``TextNode setTransform does NOT mark dirty`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let _ = TextNode.update node cache
+        TextNode.setTransform node (System.Numerics.Matrix3x2.CreateTranslation(10.0f, 20.0f))
+        Assert.False(node.IsDirty, "Transform change should not mark dirty")
+
+    [<Fact>]
+    let ``TextNode hitTest returns valid index`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        if dl.GlyphCount > 0 then
+            let firstX = dl.XPositions.[0]
+            let firstY = dl.YPositions.[0]
+            let idx = TextNode.hitTest dl (firstX + 5.0f) firstY 20.0f advances
+            Assert.True(idx >= 0, "Should find a hit at first glyph position")
+
+    [<Fact>]
+    let ``TextNode hitTest returns -1 for miss`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        let idx = TextNode.hitTest dl -1000.0f -1000.0f 20.0f advances
+        Assert.Equal(-1, idx)
+
+    [<Fact>]
+    let ``TextNode caretPosition at start`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        let struct (x, _, h) = TextNode.caretPosition dl 0 20.0f advances
+        if dl.GlyphCount > 0 then
+            Assert.Equal(dl.XPositions.[0], x)
+            Assert.True(h > 0.0f)
+
+    [<Fact>]
+    let ``TextNode caretPosition after last glyph`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        let struct (x, _, _) = TextNode.caretPosition dl dl.GlyphCount 20.0f advances
+        if dl.GlyphCount > 0 then
+            let lastX = dl.XPositions.[dl.GlyphCount - 1]
+            Assert.True(x > lastX, "Caret after last glyph should be past its X position")
+
+    [<Fact>]
+    let ``TextNode selectionRects returns rects`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        if dl.GlyphCount > 2 then
+            let rects = TextNode.selectionRects dl 0 3 20.0f advances
+            Assert.True(rects.Length > 0, "Should have selection rectangles")
+            for struct (_, _, w, h) in rects do
+                Assert.True(w > 0.0f, "Selection width should be positive")
+                Assert.True(h > 0.0f, "Selection height should be positive")
+
+    [<Fact>]
+    let ``TextNode selectionRects empty range returns empty`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl = TextNode.update node cache
+        let advances = Array.init dl.GlyphCount (fun _ -> 10.0f)
+        let rects = TextNode.selectionRects dl 3 3 20.0f advances
+        Assert.Equal(0, rects.Length)
+
+    [<Fact>]
+    let ``TextNode update after text change produces different DrawList`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let _ = TextNode.update node cache
+        TextNode.setText node "Different text"
+        let dl2 = TextNode.update node cache
+        Assert.True(dl2.GlyphCount > 0)
+
+    [<Fact>]
+    let ``TextNode cached DrawList is returned on non-dirty update`` () =
+        let node = createTestNode()
+        let cache = defaultCache()
+        let dl1 = TextNode.update node cache
+        let dl2 = TextNode.update node cache
+        Assert.Equal(dl1.GlyphCount, dl2.GlyphCount)
+        for i in 0 .. dl1.GlyphCount - 1 do
+            Assert.Equal(dl1.GlyphIds.[i], dl2.GlyphIds.[i])

@@ -18,6 +18,9 @@
     <Compile Include="Shapes.fs" />
     <Compile Include="SimdAdvance.fs" />
     <Compile Include="LayoutEngine.fs" />
+    <Compile Include="DrawList.fs" />
+    <Compile Include="ShapeCache.fs" />
+    <Compile Include="TextNode.fs" />
   </ItemGroup>
 
 </Project>
