@@ -163,7 +163,8 @@ current code and reflect the corrected glyph-positioning algorithm — the
 **conservative-interval scanline query** (midpoint + band-top + band-bottom
 intersection) ensures that the full line band, from cap height down to descender,
 stays inside the shape boundary at every Y position, with no horizontal or vertical
-overflow.
+overflow.  Each glyph's `ClusterIndex` tracks the original source character position,
+so word-break whitespace skipping never causes character drift in rendered output.
 
 #### Circle — Flow mode (12 px, long text)
 
@@ -175,10 +176,10 @@ overflow.
 
                       |  Th e ·q u c k           |
                      |                            |
-                |   · br o w n·f o ·j u  m p           |
-           |   s· o ver· t h· l azy · d og.· Pa ck  ·       |
-        |  my · bo x·w ith·f iv e· d o zn· l i qur · j u       |
-      |g  s.  ·Ho w ·ve xi ng ly· qui c k·daf t ·z ebra s  · j   |
+                |   b ro w n ·fo x ju m  p s           |
+           |   ov e r·th e ·a z y·d o g .·Pa ck ·m  y       |
+        |  bo x ·w ith ·five ·d oz e n ·iq u o r·u g s .       |
+      |H  ow  ·ve x ing ly ·q uic k·d a ft·ze b ra s·ju m  p !   |
     |                                                              |
    |                                                                |
   |                                                                  |
@@ -201,10 +202,13 @@ overflow.
       |                                                          |
     |                                                              |
    |                                                                |
-   ·             W        o     r   l        d                     |
- | !          ·   G        l        y         p                   |
-   |                                                                |
-        |     h        A     u                      |
+  |                                                                  |
+ |                                                                    |
+|    W             o        r     l   d        !                       |
+|                                                                      |
+ | G          l   y        p        h         A                       |
+  |                                                                  |
+              |     u        r     a                     |
 ```
 
 #### Diamond — Flow mode (12 px)
@@ -215,10 +219,10 @@ overflow.
                                  |T   |
                                  |     |
                              |  h e       |
-                          |  · qui c         |
-                       | k ·b r  own· f         |
-                   |  ox ·  ju mp s· over ·         |
-                |  the · a z y ·                       |
+                          |  q uic k         |
+                       | b ro w  n·fo x         |
+                   |  ju m  ps ·o ve r·th e         |
+                |  laz y d o g .                       |
               |                                          |
 ```
 
@@ -230,16 +234,16 @@ overflow.
                                   T  |
                                | h e    |
                                |        |
-                             | · quic     |
-                           | k·b r o        |
+                             | q uick     |
+                           | bro w n        |
                            |                 |
-                        | wn ·fox · j u        |
-                      | m ps ·over ·the ·        |
+                        | fo x·ju m p s        |
+                      | o ve r·the ·laz y        |
                       |                          |
-                    | la z ·d og .·P  ack ·m       |
-                  |y  bo x·i t · f iv e·doze n ·     |
-               | liq u r· j u gs. ·Ho w v exi ngl       |
-             | y· quick ·d af ·z e b r                    |
+                    | do g ·P ac k·m  y·b ox       |
+                  |w  th ·fv e d o ze n·liqu o r     |
+               | jug s ·H o w ·ve xin g y ·qu ick       |
+             | da ft·ze br as ju m p !                    |
 ```
 
 #### Parallelogram — Flow mode (12 px, shear = 0.4)
@@ -250,7 +254,7 @@ overflow.
 |                                                      |
 |Th e ·qu ick ·bro w n ·fox ·u m  ps ·ov e r·the        |
  |                                                       |
-  ·la zy· d og                                            |
+  laz y·d o g.                                            |
 ```
 
 #### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
@@ -259,15 +263,20 @@ overflow.
   Glyphs placed  : 34 / 35 source chars
   Scripts        : Latin, Greek (αβγ), Math (∑∫≠), Symbols (☃♠), Hebrew (שלום), Emoji (😀)
 
-  Gyph Aura·Helo·αβγ·∑∫≠·☃♠·שלם·😀
+  Gyph Aura·Helo·αβγ·∑∫≠·☃♠ ש לם·😀
 ```
+
+> **Note:** Some narrow characters (like 'i', 'l') may appear missing in ASCII due to
+> the fixed-width grid — two proportional-width glyphs can map to the same column.
+> The PNG and SVG renders (below) use real pixel coordinates and display every character
+> correctly.
 
 #### TextNode Cache Demo
 
 ```
-  First render  : 2231 µs  (17 glyphs)
-  Cached render :    0 µs  (17 glyphs, cache hit)   ← instant on cache hit
-  After setText :  470 µs  (11 glyphs)
+  First render  : ~2300 µs  (17 glyphs)
+  Cached render :     0 µs  (17 glyphs, cache hit)   ← instant on cache hit
+  After setText :  ~500 µs  (11 glyphs)
 ```
 
 ---
@@ -314,7 +323,7 @@ zero-copy transfer over the Wasm/JS boundary.
 # Build all (lib + tests + demo)
 dotnet build
 
-# Run tests (200 tests across 12 modules — includes FsCheck property-based tests)
+# Run tests (216 tests across 13 modules — includes FsCheck property-based tests)
 dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
 # Run demo (regenerates demo/output/*.png and *.svg)
@@ -337,6 +346,7 @@ dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 | `MultiScriptTests` | 18 | Hebrew, Arabic, Greek, Math, Emoji |
 | `PropertyTests` (FsCheck) | **12** | Property-based tests using FsCheck |
 | `EdgeCases` (deterministic) | **5** | Squeeze, vertical overflow, containment |
+| `IndustryStandardTests` | **16** | Cluster mapping, advance accumulation, AABB containment |
 
 #### Property-Based Tests (FsCheck)
 
@@ -358,6 +368,25 @@ the shape bottom.
 **4. Edge-Case "Squeeze"** — a long word (e.g. "Donaudampfschifffahrt") in a small
 60 px circle is correctly deferred to wider scanlines; no glyph overflows the
 boundary and at least some glyphs are placed.
+
+#### Industry-Standard Tests
+
+`IndustryStandardTests.fs` validates correctness against HarfBuzz/OpenType conventions:
+
+**1. ClusterIndex Mapping** — every glyph's `ClusterIndex` is within source text bounds,
+monotonically non-decreasing per line, and resolves to the correct `GlyphId` via cmap
+(verifying the fix for the character-drift bug at word-break boundaries).
+
+**2. Advance Accumulation** — glyph X positions match the pen-advance model:
+`X[i] = X[i-1] + advance[i-1] ± kern`. Known kerning pairs ("To", "VA") produce
+measurably tighter spacing than un-kerned pairs.
+
+**3. Analytical AABB Containment** — every glyph X is verified against the *analytical*
+shape formula (Pythagoras for circles, linear interpolation for triangles and diamonds),
+not just the GetInterval API.
+
+**4. FsCheck Properties** — randomised ClusterIndex in-bounds and monotonicity checks
+across hundreds of random shapes and text inputs.
 
 Requirements: **.NET 10 SDK**. The library also targets **net8.0** for
 compatibility with older runtimes.
