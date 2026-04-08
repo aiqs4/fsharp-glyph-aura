@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GlyphAura/GlyphAura.fsproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GlyphAura.Tests/GlyphAura.Tests.fsproj" />
+  </Folder>
+  <Folder Name="/demo/">
+    <Project Path="demo/GlyphAura.Demo/GlyphAura.Demo.fsproj" />
+  </Folder>
+</Solution>
