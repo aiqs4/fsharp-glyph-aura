@@ -896,7 +896,8 @@ module LayoutEngineTests =
     [<Fact>]
     let ``layout Fit mode into diamond finds font size`` () =
         let tables, metrics = loadFontForLayout()
-        let shape = Shapes.diamond { X = 100.0f; Y = 150.0f } 100.0f 150.0f
+        // Large diamond so "Hello World" fits even with conservative band-midpoint widths.
+        let shape = Shapes.diamond { X = 300.0f; Y = 300.0f } 300.0f 300.0f
         let text = "Hello World"
         let req = {
             Text = ReadOnlyMemory(text.ToCharArray())
@@ -909,7 +910,10 @@ module LayoutEngineTests =
         let result = LayoutEngine.layout req
         Assert.True(result.FontSizeUsed > 4.0f, sprintf "Font size should be > 4, got %f" result.FontSizeUsed)
         Assert.True(result.Glyphs.Length > 0, "Should produce glyphs")
-        Assert.True(result.LastTextIndex >= text.Length, sprintf "All text should fit, LastTextIndex=%d" result.LastTextIndex)
+        // In Fit mode the engine finds the largest size where all text fits; with a
+        // 600 px-wide equatorial diamond, "Hello World" must be fully placed.
+        Assert.True(result.LastTextIndex >= text.Length,
+            sprintf "All text should fit in large diamond, LastTextIndex=%d" result.LastTextIndex)
 
         if result.GlyphBuffer.Length > 0 then
             ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
@@ -2203,3 +2207,330 @@ module MultiScriptTests =
             prevY <- gp.Y
         if result.GlyphBuffer.Length > 0 then
             ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+// ============================================================
+// Scanline Tests — band-midpoint query & silent-drop fix
+// ============================================================
+
+/// Tests that verify the two scanline bugs are fixed:
+///
+///   Bug 1 — Silent text drop on narrow lines:
+///     layoutLine was returning (0, 1) when no glyph fit (GlyphCount=0),
+///     silently consuming the first character without placing it. Text near
+///     the apex of a triangle or top/bottom of a circle was permanently lost.
+///     Fix: return (0, 0) so the same text retries on the next wider line.
+///
+///   Bug 2 — GetInterval queried at baseline instead of band midpoint:
+///     layoutAtSize was calling GetInterval(y) where y is the typographic
+///     baseline. The hint spec says to query at the band midpoint
+///       bandMid = y − ascent + lineHeight×0.5
+///     so the width constraint is representative of the full line height, not
+///     just the baseline. Querying at the baseline gave a too-wide interval
+///     for lines near shape extremities, allowing ascenders to overflow.
+module ScanlineTests =
+
+    open System.Buffers
+
+    // ── 1. Direct scanline math (no font loading) ─────────────────────────
+
+    [<Fact>]
+    let ``Scanline: circle interval uses Pythagorean formula`` () =
+        // GetInterval must match x_offset = sqrt(r² − |y − cy|²)
+        let cx, cy, r = 150.0f, 150.0f, 150.0f
+        let circle = Shapes.circle { X = cx; Y = cy } r
+        let tests = [ 6.985f; 50.0f; 75.0f; 150.0f; 200.0f; 280.0f ]
+        for y in tests do
+            let dy = abs (y - cy)
+            if dy < r then
+                let expectedHalf = sqrt (r * r - dy * dy)
+                match circle.GetInterval y with
+                | ValueSome(struct (xS, xE)) ->
+                    let got = (xE - xS) / 2.0f
+                    Assert.True(abs (got - expectedHalf) < 0.5f,
+                        sprintf "Circle at y=%.2f: expected half-width=%.4f got=%.4f" y expectedHalf got)
+                | ValueNone ->
+                    Assert.Fail(sprintf "Circle should have interval at y=%.2f" y)
+
+    [<Fact>]
+    let ``Scanline: circle band-midpoint is narrower than baseline for first line`` () =
+        // The whole point of querying at bandMid: it's narrower than the baseline
+        // query for lines near the top/bottom of a circle.
+        let r = 150.0f
+        let circle = Shapes.circle { X = 150.0f; Y = 150.0f } r
+        // Simulate 12 px DejaVu metrics: ascent≈11.14, lineHeight≈13.97
+        let ascent = 11.14f
+        let lineHeight = 13.97f
+        let firstBaseline = 0.0f + ascent        // bbox.Top + ascent = 0 + 11.14
+        let firstBandMid  = 0.0f + lineHeight * 0.5f  // bbox.Top + lineHeight/2
+        let widthAtBaseline =
+            match circle.GetInterval firstBaseline with
+            | ValueSome(struct (s, e)) -> e - s
+            | ValueNone -> 0.0f
+        let widthAtMidpoint =
+            match circle.GetInterval firstBandMid with
+            | ValueSome(struct (s, e)) -> e - s
+            | ValueNone -> 0.0f
+        Assert.True(widthAtMidpoint < widthAtBaseline,
+            sprintf "Band-midpoint width (%.2f) should be < baseline width (%.2f) for first circle line"
+                widthAtMidpoint widthAtBaseline)
+
+    [<Fact>]
+    let ``Scanline: triangle interval uses linear interpolation`` () =
+        // Width at y = base × (y − apexY) / height
+        let cx, cy, base' = 200.0f, 150.0f, 300.0f
+        let height = 200.0f
+        let tri = Shapes.triangle { X = cx; Y = cy } base' height
+        let apexY = cy - height / 2.0f  // = 50.0
+        let tests = [ 60.0f; 100.0f; 150.0f; 200.0f; 240.0f ]
+        for y in tests do
+            let normY = (y - apexY) / height
+            let expectedHalf = (base' / 2.0f) * normY
+            match tri.GetInterval y with
+            | ValueSome(struct (xS, xE)) ->
+                let got = (xE - xS) / 2.0f
+                Assert.True(abs (got - expectedHalf) < 0.5f,
+                    sprintf "Triangle at y=%.1f: expected half-width=%.4f got=%.4f" y expectedHalf got)
+            | ValueNone ->
+                if normY > 0.01f then
+                    Assert.Fail(sprintf "Triangle should have interval at y=%.1f (normY=%.3f)" y normY)
+
+    [<Fact>]
+    let ``Scanline: triangle scanlines grow linearly from apex to base`` () =
+        // Each scanline one lineHeight lower must be wider by a predictable delta.
+        let tri = Shapes.triangle { X = 0.0f; Y = 0.0f } 200.0f 200.0f
+        // halfBase=100, height=200. Width at y = 2 * 100 * (y+100)/200 = (y+100)
+        let lineHeight = 14.0f
+        let mutable prevWidth = -1.0f
+        let mutable y = -95.0f  // start just below apex
+        while y < 95.0f do
+            match tri.GetInterval y with
+            | ValueSome(struct (s, e)) ->
+                let w = e - s
+                Assert.True(w >= prevWidth - 0.5f,
+                    sprintf "Width should be non-decreasing, prev=%.2f cur=%.2f at y=%.2f" prevWidth w y)
+                prevWidth <- w
+            | ValueNone -> ()
+            y <- y + lineHeight
+
+    [<Fact>]
+    let ``Scanline: diamond interval decreases symmetrically from center`` () =
+        // Diamond formula: halfWidth = hw * (1 − |dy| / hh)
+        // At dy=0:   hw=100 → halfWidth=100, width=200
+        // At dy=25:  halfWidth=100*(1−25/100)=75,  width=150
+        // At dy=50:  halfWidth=100*(1−50/100)=50,  width=100
+        // At dy=75:  halfWidth=25, width=50
+        // At dy=100: halfWidth=0 → ValueNone
+        let d = Shapes.diamond { X = 0.0f; Y = 0.0f } 100.0f 100.0f
+        let width y = match d.GetInterval y with ValueSome(struct (s,e)) -> e-s | ValueNone -> -1.0f
+        Assert.True(abs (width  0.0f - 200.0f) < 0.5f, sprintf "At dy=0 expected 200, got %.2f"  (width 0.0f))
+        Assert.True(abs (width 25.0f - 150.0f) < 0.5f, sprintf "At dy=25 expected 150, got %.2f" (width 25.0f))
+        Assert.True(abs (width 50.0f - 100.0f) < 0.5f, sprintf "At dy=50 expected 100, got %.2f" (width 50.0f))
+        Assert.True(abs (width 75.0f -  50.0f) < 0.5f, sprintf "At dy=75 expected 50, got %.2f"  (width 75.0f))
+        // Symmetry: y=−25 same as y=+25
+        Assert.True(abs (width -25.0f - 150.0f) < 0.5f, sprintf "At dy=-25 expected 150, got %.2f" (width -25.0f))
+        // At apex (dy=hh=100) the shape has zero width — GetInterval returns ValueNone
+        match d.GetInterval 100.0f with
+        | ValueNone -> ()
+        | ValueSome(struct (s, e)) ->
+            Assert.True(e - s < 0.5f, sprintf "At apex expected 0 width, got %.2f" (e-s))
+
+    [<Fact>]
+    let ``Scanline: parallelogram interval shifts by shear times delta-y`` () =
+        let hw = 100.0f
+        let shear = 0.5f
+        let p = Shapes.parallelogram { X = 0.0f; Y = 0.0f } (2.0f * hw) 100.0f shear
+        let check y =
+            match p.GetInterval y with
+            | ValueSome(struct (s, e)) ->
+                let expectedCenter = shear * y
+                let center = (s + e) / 2.0f
+                Assert.True(abs (center - expectedCenter) < 0.5f,
+                    sprintf "Para center at y=%.1f: expected %.2f got %.2f" y expectedCenter center)
+                Assert.True(abs (e - s - 2.0f * hw) < 0.5f,
+                    sprintf "Para width at y=%.1f: expected %.2f got %.2f" y (2.0f*hw) (e-s))
+            | ValueNone -> Assert.Fail(sprintf "Parallelogram should have interval at y=%.1f" y)
+        check 0.0f; check 20.0f; check -20.0f; check 40.0f
+
+    // ── 2. Bug 1 regression — no silent char drop ────────────────────────
+
+    [<Fact>]
+    let ``Layout Bug1: no silent char drop at narrow triangle apex`` () =
+        // Narrow tall triangle: first few scanlines are thinner than one glyph.
+        // Bug: layoutLine returned (0,1) on those lines — consuming 'A' without placing it —
+        //      so the first PLACED glyph was 'B'.
+        // Fix: layoutLine returns (0,0) when GlyphCount=0, retrying on the next wider line.
+        let tables, metrics = TestHelper.loadTestFont()
+        // Triangle center=(25,100), base=50, height=150 → apex at y=25.
+        // At 14 px the first band-mid (y≈33) gives width≈2.7 px (too narrow for 'A'≈8.6 px),
+        // so 'A' must wait for line 3 (band-mid≈65.7, width≈13.6 px).
+        let shape = Shapes.triangle { X = 25.0f; Y = 100.0f } 50.0f 150.0f
+        let text  = "ABC"
+        let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                      Font = tables; Metrics = metrics; FontSizePx = 14.0f; Mode = Flow }
+        let result = LayoutEngine.layout req
+        Assert.True(result.Glyphs.Length >= 1, "Should place at least one glyph")
+        // Resolve 'A' → its glyph ID
+        let cmap   = CMap.parse tables.Cmap
+        let aGlyph = CMap.resolve cmap (uint32 'A')
+        let span   = result.Glyphs.Span
+        Assert.True(span.[0].GlyphId = aGlyph,
+            sprintf "First placed glyph must be 'A' (id=%d), got id=%d — char was silently dropped"
+                aGlyph span.[0].GlyphId)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout Bug1: glyph count > 0 for text in narrow triangle`` () =
+        // With Bug1, narrow lines silently consumed chars → far fewer glyphs than expected.
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.triangle { X = 25.0f; Y = 100.0f } 50.0f 150.0f
+        let text  = "The quick brown fox jumps over the lazy dog."
+        let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+        let result = LayoutEngine.layout req
+        // The triangle base is 50px, height 150px, so after a few narrow lines there's
+        // enough width for continuous text. Expect at least 10 glyphs placed.
+        Assert.True(result.Glyphs.Length >= 10,
+            sprintf "Expected at least 10 glyphs in narrow triangle, got %d"
+                result.Glyphs.Length)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout Bug1: long text coverage in circle - placed chars monotonically cover text`` () =
+        // Text chars must be placed in source order; no chars should be skipped.
+        // Specifically: glyph[i].GlyphId must come from text[textIdx_i] with textIdx_i
+        // strictly increasing.  We verify this by checking that the ClusterIndex of each
+        // glyph (char-space offset) is ≥ the previous one.
+        //
+        // (The LayoutEngine doesn't expose ClusterIndex in GlyphPosition, but we can
+        //  verify indirectly by checking that chars consumed = glyphs placed + spaces.)
+        let tables, metrics = TestHelper.loadTestFont()
+        let shape = Shapes.circle { X = 200.0f; Y = 200.0f } 200.0f
+        let text  = "The quick brown fox jumps over the lazy dog. " +
+                    "Pack my box with five dozen liquor jugs."
+        let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+        let result = LayoutEngine.layout req
+        // Every glyph placed must have come from some position in the text, and
+        // those positions must be in non-decreasing order.  The simplest invariant
+        // to check without ClusterIndex in GlyphPosition: glyph X must be ≥ the xStart
+        // for its line (verified by X-monotonicity per line, already covered elsewhere).
+        // Here we check: glyph count must be a reasonable fraction of text length.
+        Assert.True(result.Glyphs.Length > 50,
+            sprintf "Expected > 50 glyphs in circle for %d-char text, got %d"
+                text.Length result.Glyphs.Length)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 3. Bug 2 regression — glyph X within band-midpoint interval ────────
+
+    [<Fact>]
+    let ``Layout Bug2: circle glyph X positions within band-midpoint interval`` () =
+        // With Bug2 (query at baseline), xStart was further left than the bandMid interval,
+        // so the first glyph on each line started outside the bandMid circle chord.
+        // Fix: query GetInterval at bandMid → all glyph X positions satisfy
+        //      X ≥ cx − sqrt(r²−(bandMid−cy)²) − ε
+        let tables, metrics = TestHelper.loadTestFont()
+        let cx, cy, r = 200.0f, 200.0f, 200.0f
+        let shape = Shapes.circle { X = cx; Y = cy } r
+        let text  = "The quick brown fox jumps over the lazy dog."
+        let req   = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                      Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+        let result = LayoutEngine.layout req
+        // Recompute font metrics for bandMid calculation
+        let upm        = float32 metrics.UnitsPerEm
+        let scale      = 12.0f / upm
+        let lineHeight = (float32 metrics.Ascender - float32 metrics.Descender + float32 metrics.LineGap) * scale
+        let ascent     = float32 metrics.Ascender * scale
+        let span = result.Glyphs.Span
+        for i in 0 .. span.Length - 1 do
+            let gp      = span.[i]
+            let bandMid = gp.Y - ascent + lineHeight * 0.5f
+            let dy      = bandMid - cy
+            if abs dy < r then
+                let xOffset = sqrt (r * r - dy * dy)
+                let xStart  = cx - xOffset
+                let xEnd    = cx + xOffset
+                Assert.True(gp.X >= xStart - 1.0f,
+                    sprintf "Glyph %d X=%.2f is left of bandMid xStart=%.2f (bandMid=%.2f, dy=%.2f)"
+                        i gp.X xStart bandMid dy)
+                Assert.True(gp.X <= xEnd + 1.0f,
+                    sprintf "Glyph %d X=%.2f is right of bandMid xEnd=%.2f (bandMid=%.2f, dy=%.2f)"
+                        i gp.X xEnd bandMid dy)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout Bug2: triangle glyph X positions within band-midpoint interval`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let cx, cy, base', height = 200.0f, 200.0f, 400.0f, 300.0f
+        let shape   = Shapes.triangle { X = cx; Y = cy } base' height
+        let apexY   = cy - height / 2.0f
+        let halfBase = base' / 2.0f
+        let text    = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs."
+        let req     = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                        Font = tables; Metrics = metrics; FontSizePx = 11.0f; Mode = Flow }
+        let result  = LayoutEngine.layout req
+        let upm        = float32 metrics.UnitsPerEm
+        let scale      = 11.0f / upm
+        let lineHeight = (float32 metrics.Ascender - float32 metrics.Descender + float32 metrics.LineGap) * scale
+        let ascent     = float32 metrics.Ascender * scale
+        let span = result.Glyphs.Span
+        for i in 0 .. span.Length - 1 do
+            let gp      = span.[i]
+            let bandMid = gp.Y - ascent + lineHeight * 0.5f
+            let normY   = (bandMid - apexY) / height
+            if normY > 0.0f && normY < 1.0f then
+                let xStart = cx - halfBase * normY
+                let xEnd   = cx + halfBase * normY
+                Assert.True(gp.X >= xStart - 1.0f,
+                    sprintf "Glyph %d X=%.2f left of bandMid xStart=%.2f (bandMid=%.2f normY=%.3f)"
+                        i gp.X xStart bandMid normY)
+                Assert.True(gp.X <= xEnd + 1.0f,
+                    sprintf "Glyph %d X=%.2f right of bandMid xEnd=%.2f (bandMid=%.2f normY=%.3f)"
+                        i gp.X xEnd bandMid normY)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 4. Combined regression — long-text coverage in all shapes ──────────
+
+    [<Fact>]
+    let ``Layout: all four shapes accept long multi-pangram text without crash`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let text = "The quick brown fox jumps over the lazy dog. " +
+                   "Pack my box with five dozen liquor jugs. " +
+                   "How vexingly quick daft zebras jump!"
+        let shapes = [
+            Shapes.circle        { X = 200.0f; Y = 200.0f } 200.0f
+            Shapes.diamond       { X = 200.0f; Y = 200.0f } 200.0f 200.0f
+            Shapes.triangle      { X = 200.0f; Y = 200.0f } 400.0f 300.0f
+            Shapes.parallelogram { X = 200.0f; Y = 200.0f } 400.0f 200.0f 0.3f
+        ]
+        for shape in shapes do
+            let req = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Flow }
+            let result = LayoutEngine.layout req
+            Assert.True(result.Glyphs.Length > 0,
+                sprintf "Shape should place at least 1 glyph for text of length %d" text.Length)
+            if result.GlyphBuffer.Length > 0 then
+                ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout: Fit mode produces positive glyph count in circle and triangle`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let text = "GlyphAura"
+        let shapes = [
+            Shapes.circle   { X = 150.0f; Y = 150.0f } 150.0f
+            Shapes.triangle { X = 150.0f; Y = 150.0f } 300.0f 200.0f
+        ]
+        for shape in shapes do
+            let req = { Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+                        Font = tables; Metrics = metrics; FontSizePx = 12.0f; Mode = Fit }
+            let result = LayoutEngine.layout req
+            Assert.True(result.Glyphs.Length > 0,
+                sprintf "Fit mode should place at least 1 glyph")
+            Assert.True(result.FontSizeUsed > 0.0f,
+                "Fit mode must resolve a positive font size")
+            if result.GlyphBuffer.Length > 0 then
+                ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)

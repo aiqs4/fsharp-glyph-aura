@@ -84,6 +84,12 @@ module LayoutEngine =
 
     /// Layout a single line with word-boundary breaking.
     /// Returns the number of glyphs placed and the text index consumed.
+    ///
+    /// Narrow-line contract: if the available width is too narrow for even the
+    /// FIRST glyph (GlyphCount = 0 after shaping), return (0, 0) so that
+    /// textIdx does NOT advance and the same text is retried on the next,
+    /// wider scanline.  This prevents text from being silently swallowed near
+    /// the apex of a triangle or the top/bottom of a circle.
     let private layoutLine
         (text: ReadOnlySpan<char>)
         (fd: FontData)
@@ -101,6 +107,15 @@ module LayoutEngine =
         try
             // Shape the line with width constraint
             let result = Shaper.shapeLine text fd.Cmap fd.Hmtx fd.KernLegacy scale availableWidth shapeBuf
+
+            // ── Bug fix: if no glyph fits at all, don't consume any chars.
+            // The same text will be retried on the next (wider) scanline.
+            // Without this guard, the old code would set charsConsumed=1 while
+            // placing 0 glyphs, silently discarding characters near the apex of
+            // a triangle or the extremities of a circle.
+            if result.GlyphCount = 0 && result.LastFitIndex >= 0 then
+                struct (0, 0)
+            else
 
             let mutable charsConsumed = 0
             let mutable glyphsPlaced = 0
@@ -189,7 +204,19 @@ module LayoutEngine =
         let mutable maxY = Single.MinValue
 
         while y <= bbox.Bottom && textIdx < text.Length do
-            match shape.GetInterval y with
+            // ── Scanline query at band MIDPOINT (not baseline) ──────────────────
+            // A text line at baseline y occupies the vertical band
+            //   [y − ascent,  y − ascent + lineHeight]
+            // Per the scanline spec (Pythagorean / linear-lerp hint):
+            //   width = shape.GetInterval( y_mid )
+            //   where  y_mid = band_top + lineHeight/2 = y − ascent + lineHeight/2
+            //
+            // Querying at the baseline would return the (wider) interval at
+            // the typographic baseline, letting ascenders overflow the shape
+            // boundary.  The midpoint is the correct representative sample that
+            // keeps the full line band inside the shape.
+            let bandMid = y - ascent + lineHeight * 0.5f
+            match shape.GetInterval bandMid with
             | ValueNone ->
                 y <- y + lineHeight
             | ValueSome(struct (xStart, xEnd)) ->

@@ -4,29 +4,32 @@
   <g transform="translate(20.00,20.00)">
   <polyline points="116.67,3.75 103.16,7.50 93.00,11.25 84.62,15.00 77.38,18.75 70.98,22.50 65.23,26.25 60.00,30.00 55.21,33.75 50.78,37.50 46.69,41.25 42.88,45.00 39.33,48.75 36.01,52.50 32.91,56.25 30.00,60.00 27.28,63.75 24.73,67.50 22.33,71.25 20.10,75.00 18.00,78.75 16.05,82.50 14.22,86.25 12.52,90.00 10.95,93.75 9.49,97.50 8.14,101.25 6.91,105.00 5.78,108.75 4.76,112.50 3.85,116.25 3.03,120.00 2.31,123.75 1.70,127.50 1.18,131.25 0.75,135.00 0.42,138.75 0.19,142.50 0.05,146.25 0.00,150.00 0.05,153.75 0.19,157.50 0.42,161.25 0.75,165.00 1.18,168.75 1.70,172.50 2.31,176.25 3.03,180.00 3.85,183.75 4.76,187.50 5.78,191.25 6.91,195.00 8.14,198.75 9.49,202.50 10.95,206.25 12.52,210.00 14.22,213.75 16.05,217.50 18.00,221.25 20.10,225.00 22.33,228.75 24.73,232.50 27.28,236.25 30.00,240.00 32.91,243.75 36.01,247.50 39.33,251.25 42.88,255.00 46.69,258.75 50.78,262.50 55.21,266.25 60.00,270.00 65.23,273.75 70.98,277.50 77.38,281.25 84.62,285.00 93.00,288.75 103.16,292.50 116.67,296.25" fill="none" stroke="#4a90d9" stroke-width="1.5" opacity="0.8"/>
   <polyline points="183.33,3.75 196.84,7.50 207.00,11.25 215.38,15.00 222.62,18.75 229.02,22.50 234.77,26.25 240.00,30.00 244.79,33.75 249.22,37.50 253.31,41.25 257.12,45.00 260.67,48.75 263.99,52.50 267.09,56.25 270.00,60.00 272.72,63.75 275.27,67.50 277.67,71.25 279.90,75.00 282.00,78.75 283.95,82.50 285.78,86.25 287.48,90.00 289.05,93.75 290.51,97.50 291.86,101.25 293.09,105.00 294.22,108.75 295.24,112.50 296.15,116.25 296.97,120.00 297.69,123.75 298.30,127.50 298.82,131.25 299.25,135.00 299.58,138.75 299.81,142.50 299.95,146.25 300.00,150.00 299.95,153.75 299.81,157.50 299.58,161.25 299.25,165.00 298.82,168.75 298.30,172.50 297.69,176.25 296.97,180.00 296.15,183.75 295.24,187.50 294.22,191.25 293.09,195.00 291.86,198.75 290.51,202.50 289.05,206.25 287.48,210.00 285.78,213.75 283.95,217.50 282.00,221.25 279.90,225.00 277.67,228.75 275.27,232.50 272.72,236.25 270.00,240.00 267.09,243.75 263.99,247.50 260.67,251.25 257.12,255.00 253.31,258.75 249.22,262.50 244.79,266.25 240.00,270.00 234.77,273.75 229.02,277.50 222.62,281.25 215.38,285.00 207.00,288.75 196.84,292.50 183.33,296.25" fill="none" stroke="#4a90d9" stroke-width="1.5" opacity="0.8"/>
-  <line x1="29.88" y1="60.16" x2="270.12" y2="60.16" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
-  <line x1="0.69" y1="135.60" x2="299.31" y2="135.60" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
-  <line x1="12.99" y1="211.05" x2="287.01" y2="211.05" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
-  <line x1="87.79" y1="286.49" x2="212.21" y2="286.49" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
-  <text x="29.88" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">H</text>
-  <text x="78.62" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">e</text>
-  <text x="118.49" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">l</text>
-  <text x="136.50" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">l</text>
-  <text x="154.50" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">o</text>
-  <text x="194.16" y="60.16" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">,</text>
-  <text x="0.69" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50"> </text>
-  <text x="60.98" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">W</text>
-  <text x="100.63" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">o</text>
-  <text x="127.28" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">r</text>
-  <text x="145.28" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">l</text>
-  <text x="186.42" y="135.60" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">d</text>
-  <text x="12.99" y="211.05" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">!</text>
-  <text x="63.21" y="211.05" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50"> </text>
-  <text x="81.21" y="211.05" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">G</text>
-  <text x="119.57" y="211.05" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">l</text>
-  <text x="160.71" y="211.05" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">y</text>
-  <text x="87.79" y="286.49" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">p</text>
-  <text x="132.13" y="286.49" font-family="DejaVu Sans,Arial,sans-serif" font-size="64.8" fill="#2c3e50">h</text>
+  <line x1="27.82" y1="62.98" x2="272.18" y2="62.98" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
+  <line x1="0.22" y1="141.95" x2="299.78" y2="141.95" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
+  <line x1="17.83" y1="220.93" x2="282.17" y2="220.93" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
+  <line x1="144.81" y1="299.91" x2="155.19" y2="299.91" stroke="#27ae60" stroke-width="0.6" stroke-dasharray="4,3" opacity="0.8"/>
+  <text x="48.57" y="62.98" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">H</text>
+  <text x="99.59" y="62.98" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">e</text>
+  <text x="141.33" y="62.98" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">l</text>
+  <text x="160.18" y="62.98" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">l</text>
+  <text x="179.03" y="62.98" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">o</text>
+  <text x="3.35" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">,</text>
+  <text x="24.92" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50"> </text>
+  <text x="46.48" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">W</text>
+  <text x="109.59" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">o</text>
+  <text x="151.10" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">r</text>
+  <text x="179.00" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">l</text>
+  <text x="197.85" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">d</text>
+  <text x="240.91" y="141.95" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">!</text>
+  <text x="7.70" y="220.93" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50"> </text>
+  <text x="60.28" y="220.93" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">G</text>
+  <text x="79.13" y="220.93" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">l</text>
+  <text x="119.28" y="220.93" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">y</text>
+  <text x="162.34" y="220.93" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">p</text>
+  <text x="69.27" y="299.91" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">h</text>
+  <text x="115.68" y="299.91" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">A</text>
+  <text x="158.68" y="299.91" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">u</text>
+  <text x="186.58" y="299.91" font-family="DejaVu Sans,Arial,sans-serif" font-size="67.8" fill="#2c3e50">r</text>
   </g>
   <text x="6" y="318" font-family="monospace" font-size="10" fill="#555">Circle r=150 — Fit (auto-size)</text>
   <text x="6" y="332" font-family="monospace" font-size="9" fill="#27ae60">— baseline   </text>

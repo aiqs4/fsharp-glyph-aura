@@ -157,7 +157,8 @@ to verify that shape boundaries are smooth polylines (not staircase approximatio
 The ASCII art correctly places every glyph character *inside* the shape boundary `|`.
 The shape boundary is anchored to each row's actual baseline Y from the layout engine
 so glyphs never appear outside the edge.  All renders below were generated from the
-current code and reflect the corrected glyph-positioning algorithm.
+current code and reflect the corrected glyph-positioning algorithm (band-midpoint
+scanline query prevents ascenders from overflowing the shape boundary).
 
 #### Circle — Flow mode (12 px, long text)
 
@@ -167,12 +168,12 @@ current code and reflect the corrected glyph-positioning algorithm.
   Unique glyphs  : 32 (raster requests)
   Overflow       : none
 
-                      T he ·q u ick ·b row  n    |
+                      |  Th e ·q u c k           |
                      |                            |
-                ·fo x·ju  m p s·o v er·t h el a z      |
-           y · d og.· Pa ck  · y · b ox ·wi thf i           |
-        v e ·d o zn· l i quor· j ugs .·  How · vex in          |
-      gl y· qui c k·daf t ·z ebra s  ·j                          |
+                |· br o w n·f ox·j u  m ps· ov e       |
+           |r ·t he· la zy ·d og. ·P a ck · my ·b ox ·wi    |
+        |th·f iv e ·d o ze· l i quor· j ugs . · Ho w· ve xin   |
+      g l y·q ui ck· a f t ·ze bra s · j                         |
     |                                                              |
    |                                                                |
   |                                                                  |
@@ -183,48 +184,52 @@ current code and reflect the corrected glyph-positioning algorithm.
 #### Circle — Fit mode (auto font size)
 
 ```
-  Glyphs placed  : 19 / 23 source chars
-  Font size used : 64.8 px   (binary-searched to fill the circle)
-  Unique glyphs  : 15 (raster requests)
+  Glyphs placed  : 22 / 23 source chars
+  Font size used : 67.8 px   (binary-searched to fill the circle)
+  Unique glyphs  : 17 (raster requests)
 
                      |                            |
                 |                                      |
-       H          e         l   l    o        ,                 |
-      |                                                          |
+            |                                              |
+         |                                                    |
+      |    H           e         l    l   o                      |
     |                                                              |
-·              W        o     r   l         d                          |
-   !           ·   G        l         y                             |
+   |                                                                |
+,    ·     W              o         r     l    d         !
+ ·  |         G   l         y         p                            |
 ```
 
 #### Diamond — Flow mode (12 px)
 
 ```
-  Glyphs placed  : 41 / 44 source chars
+  Glyphs placed  : 40 / 44 source chars
 
-                                 T    |
+                                 |T   |
                                  |     |
-                             h e          |
-                          · q uic k· bro  w  |
-                       n·f ox· j  um ps ·o v    |
-                   e r· the ·l az y· d              |
-                  |                                   |
+                             |h e         |
+                          |· q uic           |
+                       |k ·br  o wn·f           |
+                   |ox ·  j ump s ·o e r· the ·l    |
+                |a z y·                                |
               |                                          |
 ```
 
 #### Triangle — Flow mode (11 px, long text)
 
 ```
-  Glyphs placed  : 115 / 122 source chars
+  Glyphs placed  : 114 / 122 source chars
 
                                   T  |
-                               h e      |
-                             · qui c      |
-                           k·b r o wn·f     |
-                        ox · j ump s· over ·   |
-                      the ·la z y·dog .· Pa c    |
-                    k ·m ·  ox ·with ·fi ve ·      |
-                  oz en ·liqu or·j u g s.· How ·ve   |
-               x i g ly· quick ·d af t·zeb  ra          |
+                               |h e     |
+                               |        |
+                             |·q uic      |
+                           k ·b r o n· f    |
+                        |ox · j ump s· o       |
+                      |ve r·the ·la zy ·dog .·   |
+                    |P a k · my· box ·it h         |
+                  · f iv e·dz e n· iq uo r·j ug      |
+               |s. · o w v ex ingl y·q uick· da ft      |
+             |z e  br                                     |
 ```
 
 #### Parallelogram — Flow mode (12 px, shear = 0.4)
@@ -233,9 +238,9 @@ current code and reflect the corrected glyph-positioning algorithm.
   Glyphs placed  : 43 / 44 source chars
 
 |                                                      |
-T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
+T he ·q uic k·b row  n·fo x·ju m p s·o ve r·th e·la zy  |
  |                                                       |
-  ·d o g                                                  |
+ ·|d og                                                   |
 ```
 
 #### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
@@ -250,9 +255,9 @@ T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
 #### TextNode Cache Demo
 
 ```
-  First render  : 2420 µs  (17 glyphs)
+  First render  : 2231 µs  (17 glyphs)
   Cached render :    0 µs  (17 glyphs, cache hit)   ← instant on cache hit
-  After setText :  524 µs  (12 glyphs)
+  After setText :  470 µs  (11 glyphs)
 ```
 
 ---
