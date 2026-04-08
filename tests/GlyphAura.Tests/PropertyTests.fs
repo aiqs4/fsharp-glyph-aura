@@ -30,18 +30,26 @@ open GlyphAura.LayoutEngine
 
 // ── Font fixture ─────────────────────────────────────────────────────────────
 
+/// Known paths for DejaVu Sans on common platforms.
+let private fontCandidates = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    "/usr/share/fonts/TTF/DejaVuSans.ttf"
+    "C:/Windows/Fonts/arial.ttf"
+]
+
 let private sharedFont : Lazy<FontTables * FontMetrics> =
     lazy
-        let candidates = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            "/usr/share/fonts/TTF/DejaVuSans.ttf"
-            "C:/Windows/Fonts/arial.ttf"
-        ]
-        let path = candidates |> List.find File.Exists
-        let bytes = File.ReadAllBytes(path)
-        match FontProvider.load (ReadOnlyMemory(bytes)) with
-        | Ok pair -> pair
-        | Error msg -> failwith msg
+        match fontCandidates |> List.tryFind File.Exists with
+        | None ->
+            failwith
+                "No test font found. Install DejaVu fonts (e.g. apt-get install fonts-dejavu) \
+                 or ensure one of these paths exists: \
+                 /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        | Some path ->
+            let bytes = File.ReadAllBytes(path)
+            match FontProvider.load (ReadOnlyMemory(bytes)) with
+            | Ok pair -> pair
+            | Error msg -> failwith msg
 
 let private loadFont () = sharedFont.Value
 
@@ -309,16 +317,15 @@ type VerticalContainmentProperties() =
 module EdgeCases =
 
     let private loadFontHere () =
-        let candidates = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            "/usr/share/fonts/TTF/DejaVuSans.ttf"
-            "C:/Windows/Fonts/arial.ttf"
-        ]
-        let path = candidates |> List.find File.Exists
-        let bytes = File.ReadAllBytes(path)
-        match FontProvider.load (ReadOnlyMemory(bytes)) with
-        | Ok pair -> pair
-        | Error msg -> failwith msg
+        match fontCandidates |> List.tryFind File.Exists with
+        | None ->
+            failwith
+                "No test font found. Install DejaVu fonts (e.g. apt-get install fonts-dejavu)."
+        | Some path ->
+            let bytes = File.ReadAllBytes(path)
+            match FontProvider.load (ReadOnlyMemory(bytes)) with
+            | Ok pair -> pair
+            | Error msg -> failwith msg
 
     [<Fact>]
     let ``Squeeze: extra-long word deferred to wider line — no glyph outside circle`` () =

@@ -896,11 +896,10 @@ module LayoutEngineTests =
     [<Fact>]
     let ``layout Fit mode into diamond finds font size`` () =
         let tables, metrics = loadFontForLayout()
-        // Large diamond so "Hello World" fits even with conservative band-midpoint widths.
-        // "Conservative" here means the layout engine queries GetInterval at the band midpoint
-        // (y − ascent + lineHeight/2) rather than the baseline, returning a narrower chord at
-        // the shape extremities.  A 600 px-wide equatorial diamond leaves ample room for the
-        // two-word phrase at any font size the binary search might choose.
+        // Large diamond so "Hello World" fits even with conservative scanline widths.
+        // The layout engine queries GetInterval at the band midpoint AND both band edges,
+        // taking the conservative intersection.  A 600 px-wide equatorial diamond leaves
+        // ample room for the two-word phrase at any font size the binary search might choose.
         let shape = Shapes.diamond { X = 300.0f; Y = 300.0f } 300.0f 300.0f
         let text = "Hello World"
         let req = {
