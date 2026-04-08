@@ -179,6 +179,54 @@ module LayoutEngine =
         finally
             ArrayPool<ShapedGlyph>.Shared.Return(shapeBuf, false)
 
+    /// Compute a conservative horizontal interval for a text line band
+    /// [bandTop, bandBottom].
+    ///
+    /// Strategy (per the scanline spec):
+    ///   1. Use the band MIDPOINT as the primary query (as in the Python reference).
+    ///   2. Tighten by querying the band TOP and BOTTOM and taking the intersection
+    ///      (max xStart, min xEnd).  This ensures the entire vertical extent of the
+    ///      line — from cap height down to descender — remains inside the shape.
+    ///
+    /// Without this tightening a circle's upper-half lines would start glyphs at the
+    /// mid-point's wide xStart even though the shape is narrower at the band top
+    /// (where ascenders sit), causing visible overflow in rendered images.
+    let private getConservativeInterval
+        (shape: ISdfShape)
+        (bbox: Rectangle)
+        (bandTop: float32)
+        (bandBottom: float32)
+        : struct (float32 * float32) voption =
+
+        let midY = bandTop + (bandBottom - bandTop) * 0.5f
+
+        match shape.GetInterval midY with
+        | ValueNone -> ValueNone  // Midpoint outside shape — skip line
+        | ValueSome(struct (xsMid, xeMid)) ->
+            let mutable xs = xsMid
+            let mutable xe = xeMid
+
+            // Tighten with band top.
+            // Skip if band top is at or above the shape's bbox.Top — at the exact
+            // boundary GetInterval typically returns ValueNone (e.g. circle apex).
+            if bandTop > bbox.Top then
+                match shape.GetInterval bandTop with
+                | ValueSome(struct (s, e)) ->
+                    xs <- max xs s
+                    xe <- min xe e
+                | ValueNone -> ()   // Top endpoint just outside shape — midpoint is already the guard
+
+            // Tighten with band bottom.
+            // Skip if band bottom is at or below bbox.Bottom for the same reason.
+            if bandBottom < bbox.Bottom then
+                match shape.GetInterval bandBottom with
+                | ValueSome(struct (s, e)) ->
+                    xs <- max xs s
+                    xe <- min xe e
+                | ValueNone -> ()   // Bottom endpoint just outside shape
+
+            if xe > xs then ValueSome(struct (xs, xe)) else ValueNone
+
     /// Core layout loop: descend the shape line by line, shape text into each line.
     let private layoutAtSize
         (text: ReadOnlySpan<char>)
@@ -203,20 +251,23 @@ module LayoutEngine =
         let mutable maxX = Single.MinValue
         let mutable maxY = Single.MinValue
 
-        while y <= bbox.Bottom && textIdx < text.Length do
-            // ── Scanline query at band MIDPOINT (not baseline) ──────────────────
-            // A text line at baseline y occupies the vertical band
-            //   [y − ascent,  y − ascent + lineHeight]
-            // Per the scanline spec (Pythagorean / linear-lerp hint):
-            //   width = shape.GetInterval( y_mid )
-            //   where  y_mid = band_top + lineHeight/2 = y − ascent + lineHeight/2
-            //
-            // Querying at the baseline would return the (wider) interval at
-            // the typographic baseline, letting ascenders overflow the shape
-            // boundary.  The midpoint is the correct representative sample that
-            // keeps the full line band inside the shape.
-            let bandMid = y - ascent + lineHeight * 0.5f
-            match shape.GetInterval bandMid with
+        // Loop condition: ensure the FULL line band (from cap-top to descender-bottom)
+        // stays within the shape's bounding box.  Specifically:
+        //   bandBottom = y − ascent + lineHeight ≤ bbox.Bottom
+        // which is equivalent to: y ≤ bbox.Bottom − lineHeight + ascent
+        // This prevents descenders from protruding below the shape boundary.
+        while y - ascent + lineHeight <= bbox.Bottom && textIdx < text.Length do
+            // ── Conservative scanline interval ────────────────────────────────
+            // The text line occupies the vertical band [bandTop, bandBottom].
+            // We query at the midpoint AND both band edges, taking the conservative
+            // intersection (max xStart, min xEnd) so that the entire band — including
+            // ascenders (at bandTop) and descenders (at bandBottom) — fits inside the
+            // shape.  Without the endpoint tightening, glyphs in the upper half of a
+            // circle overflow the left edge at the ascender height (band top).
+            let bandTop    = y - ascent
+            let bandBottom = y - ascent + lineHeight
+
+            match getConservativeInterval shape bbox bandTop bandBottom with
             | ValueNone ->
                 y <- y + lineHeight
             | ValueSome(struct (xStart, xEnd)) ->

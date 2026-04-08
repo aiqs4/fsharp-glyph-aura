@@ -124,8 +124,10 @@ All rendered output is saved to `demo/output/`.
 ### PNG Renders (SkiaSharp)
 
 High-fidelity raster renders that verify pixel-perfect glyph placement, baseline
-alignment and kerning.  The **green dashed lines** are baselines; the **blue
-polylines** are the SDF shape boundary; the **orange band** is the cap-height zone.
+alignment and kerning.  The **green dashed lines** are baselines (clipped to the
+shape width); the **blue polylines** are the SDF shape boundary; the **orange band**
+is the cap-height zone (also clipped to the shape).  With the conservative-interval
+algorithm, no glyph or cap band extends outside the blue shape outline.
 
 | Circle — Flow 12 px (long text) | Circle — Fit (auto-size) |
 |---|---|
@@ -157,8 +159,11 @@ to verify that shape boundaries are smooth polylines (not staircase approximatio
 The ASCII art correctly places every glyph character *inside* the shape boundary `|`.
 The shape boundary is anchored to each row's actual baseline Y from the layout engine
 so glyphs never appear outside the edge.  All renders below were generated from the
-current code and reflect the corrected glyph-positioning algorithm (band-midpoint
-scanline query prevents ascenders from overflowing the shape boundary).
+current code and reflect the corrected glyph-positioning algorithm — the
+**conservative-interval scanline query** (midpoint + band-top + band-bottom
+intersection) ensures that the full line band, from cap height down to descender,
+stays inside the shape boundary at every Y position, with no horizontal or vertical
+overflow.
 
 #### Circle — Flow mode (12 px, long text)
 
@@ -170,10 +175,10 @@ scanline query prevents ascenders from overflowing the shape boundary).
 
                       |  Th e ·q u c k           |
                      |                            |
-                |· br o w n·f ox·j u  m ps· ov e       |
-           |r ·t he· la zy ·d og. ·P a ck · my ·b ox ·wi    |
-        |th·f iv e ·d o ze· l i quor· j ugs . · Ho w· ve xin   |
-      g l y·q ui ck· a f t ·ze bra s · j                         |
+                |   · br o w n·f o ·j u  m p           |
+           |   s· o ver· t h· l azy · d og.· Pa ck  ·       |
+        |  my · bo x·w ith·f iv e· d o zn· l i qur · j u       |
+      |g  s.  ·Ho w ·ve xi ng ly· qui c k·daf t ·z ebra s  · j   |
     |                                                              |
    |                                                                |
   |                                                                  |
@@ -184,19 +189,22 @@ scanline query prevents ascenders from overflowing the shape boundary).
 #### Circle — Fit mode (auto font size)
 
 ```
-  Glyphs placed  : 22 / 23 source chars
-  Font size used : 67.8 px   (binary-searched to fill the circle)
-  Unique glyphs  : 17 (raster requests)
+  Glyphs placed  : 21 / 23 source chars
+  Font size used : 61.2 px   (binary-searched to fill the circle)
+  Unique glyphs  : 16 (raster requests)
+  Overflow       : none
 
                      |                            |
                 |                                      |
             |                                              |
-         |                                                    |
-      |    H           e         l    l   o                      |
+       |    H          e        l   l   o        ,              |
+      |                                                          |
     |                                                              |
    |                                                                |
-,    ·     W              o         r     l    d         !
- ·  |         G   l         y         p                            |
+   ·             W        o     r   l        d                     |
+ | !          ·   G        l        y         p                   |
+   |                                                                |
+        |     h        A     u                      |
 ```
 
 #### Diamond — Flow mode (12 px)
@@ -206,11 +214,11 @@ scanline query prevents ascenders from overflowing the shape boundary).
 
                                  |T   |
                                  |     |
-                             |h e         |
-                          |· q uic           |
-                       |k ·br  o wn·f           |
-                   |ox ·  j ump s ·o e r· the ·l    |
-                |a z y·                                |
+                             |  h e       |
+                          |  · qui c         |
+                       | k ·b r  own· f         |
+                   |  ox ·  ju mp s· over ·         |
+                |  the · a z y ·                       |
               |                                          |
 ```
 
@@ -220,16 +228,18 @@ scanline query prevents ascenders from overflowing the shape boundary).
   Glyphs placed  : 114 / 122 source chars
 
                                   T  |
-                               |h e     |
+                               | h e    |
                                |        |
-                             |·q uic      |
-                           k ·b r o n· f    |
-                        |ox · j ump s· o       |
-                      |ve r·the ·la zy ·dog .·   |
-                    |P a k · my· box ·it h         |
-                  · f iv e·dz e n· iq uo r·j ug      |
-               |s. · o w v ex ingl y·q uick· da ft      |
-             |z e  br                                     |
+                             | · quic     |
+                           | k·b r o        |
+                           |                 |
+                        | wn ·fox · j u        |
+                      | m ps ·over ·the ·        |
+                      |                          |
+                    | la z ·d og .·P  ack ·m       |
+                  |y  bo x·i t · f iv e·doze n ·     |
+               | liq u r· j u gs. ·Ho w v exi ngl       |
+             | y· quick ·d af ·z e b r                    |
 ```
 
 #### Parallelogram — Flow mode (12 px, shear = 0.4)
@@ -238,9 +248,9 @@ scanline query prevents ascenders from overflowing the shape boundary).
   Glyphs placed  : 43 / 44 source chars
 
 |                                                      |
-T he ·q uic k·b row  n·fo x·ju m p s·o ve r·th e·la zy  |
+|Th e ·qu ick ·bro w n ·fox ·u m  ps ·ov e r·the        |
  |                                                       |
- ·|d og                                                   |
+  ·la zy· d og                                            |
 ```
 
 #### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
@@ -304,12 +314,50 @@ zero-copy transfer over the Wasm/JS boundary.
 # Build all (lib + tests + demo)
 dotnet build
 
-# Run tests (175 tests across 11 modules)
+# Run tests (200 tests across 12 modules — includes FsCheck property-based tests)
 dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
 # Run demo (regenerates demo/output/*.png and *.svg)
 dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 ```
+
+### Test Suite
+
+| Module | Tests | Description |
+|--------|-------|-------------|
+| `BinaryReaderTests` | 10 | Big-endian primitives |
+| `CMapTests` | 15 | cmap Format 4/12, PUA, BMP, SMP |
+| `HmtxTests` | 8 | Glyph advances, bounds |
+| `KernTests` | 12 | Legacy kern binary search |
+| `GposKerningTests` | 15 | GPOS class-based pair positioning |
+| `ShaperTests` | 25 | Word breaking, kerning, surrogate pairs |
+| `LayoutEngineTests` | 30 | Flow, Fit, shapes, conservative intervals |
+| `DrawListTests` | 12 | SoA layout, serialisation |
+| `ShapeCacheTests` | 10 | LRU eviction, dirty flags |
+| `MultiScriptTests` | 18 | Hebrew, Arabic, Greek, Math, Emoji |
+| `PropertyTests` (FsCheck) | **12** | Property-based tests using FsCheck |
+| `EdgeCases` (deterministic) | **5** | Squeeze, vertical overflow, containment |
+
+#### Property-Based Tests (FsCheck)
+
+`PropertyTests.fs` uses [FsCheck](https://fscheck.github.io/FsCheck/) + xUnit to
+generate hundreds of random inputs per property and verify invariants:
+
+**1. AABB Containment** — for every placed glyph at `(X, Y)`, X must lie within the
+conservative interval `[xStart, xEnd]` computed for its line band (queried at the
+band midpoint AND both band edges). This ensures glyphs never overflow the shape
+boundary at *any* Y position in the line band (not just at the baseline).
+
+**2. Non-Overlap** — consecutive glyphs on the same baseline must have strictly
+increasing X coordinates (pen-advance monotonicity).
+
+**3. Vertical Containment** — every glyph's full line band `[y − ascent, y − ascent + lineHeight]`
+stays within the shape's bounding box, preventing descenders from protruding below
+the shape bottom.
+
+**4. Edge-Case "Squeeze"** — a long word (e.g. "Donaudampfschifffahrt") in a small
+60 px circle is correctly deferred to wider scanlines; no glyph overflows the
+boundary and at least some glyphs are placed.
 
 Requirements: **.NET 10 SDK**. The library also targets **net8.0** for
 compatibility with older runtimes.

@@ -90,12 +90,16 @@ let private drawScene
     for i in 0 .. dl.GlyphCount - 1 do
         baselines.Add(dl.YPositions.[i]) |> ignore
 
-    // Cap-height bands
+    // Cap-height bands — clipped to the shape's horizontal extent at each baseline
     use capPaint = new SKPaint(Color = colCapBand, Style = SKPaintStyle.Fill)
     for y in baselines do
-        canvas.DrawRect(SKRect(bb.Left, y - ascent, bb.Right, y), capPaint)
+        let (x1, x2) =
+            match shape.GetInterval y with
+            | ValueSome(struct (xs, xe)) -> xs, xe
+            | ValueNone -> bb.Left, bb.Right
+        canvas.DrawRect(SKRect(x1, y - ascent, x2, y), capPaint)
 
-    // Baseline dashes
+    // Baseline dashes — clipped to the shape's horizontal extent at each baseline
     use blPaint = new SKPaint(
         Color       = colBaseline,
         StrokeWidth = 0.75f,
@@ -103,7 +107,11 @@ let private drawScene
     )
     blPaint.PathEffect <- SKPathEffect.CreateDash([| 4.0f; 3.0f |], 0.0f)
     for y in baselines do
-        canvas.DrawLine(bb.Left, y, bb.Right, y, blPaint)
+        let (x1, x2) =
+            match shape.GetInterval y with
+            | ValueSome(struct (xs, xe)) -> xs, xe
+            | ValueNone -> bb.Left, bb.Right
+        canvas.DrawLine(x1, y, x2, y, blPaint)
 
     // Glyph characters using SkiaSharp v3 font/paint API
     paint.Color       <- colGlyph
