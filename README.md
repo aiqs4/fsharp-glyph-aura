@@ -1,12 +1,12 @@
-# GlyphAuro
+# GlyphAura
 
 **Zero-alloc F# OpenType shaping & SDF layout engine — built for Wasm-GC.**
 
 [![CI](https://github.com/aiqs4/fsharp-glyph-auro/actions/workflows/ci.yml/badge.svg)](https://github.com/aiqs4/fsharp-glyph-auro/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/v/GlyphAuro.svg)](https://www.nuget.org/packages/GlyphAuro)
+[![NuGet](https://img.shields.io/nuget/v/GlyphAura.svg)](https://www.nuget.org/packages/GlyphAura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-GlyphAuro is a self-contained F# library that reads a `.ttf` or `.otf` file and
+GlyphAura is a self-contained F# library that reads a `.ttf` or `.otf` file and
 produces positioned `GlyphPosition` arrays ready for a renderer — with zero heap
 allocations in the hot path. It is the **typesetting back-end** you drop into any
 SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
@@ -18,35 +18,51 @@ SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
 | Feature | Status |
 |---------|--------|
 | Big-endian binary reader — no copies, no boxing | ✅ |
-| `cmap` Format 4 (BMP) + Format 12 (full Unicode) | ✅ |
+| `cmap` Format 4 (BMP) + Format 12 (full Unicode incl. SMP) | ✅ |
+| UTF-16 surrogate pair decoding (emoji, SMP math, etc.) | ✅ |
 | `hmtx` — O(1) glyph metrics | ✅ |
 | Legacy `kern` table — O(log n) binary search | ✅ |
 | GPOS LookupType 2 class-based kerning — O(1) lookup | ✅ |
 | TR#29 grapheme cluster boundaries (ZWJ, emoji, Hangul) | ✅ |
 | Bidi stub — LTR/RTL run detection | ✅ |
+| Hebrew, Arabic, Greek, Cyrillic, Math, Symbols (BMP) | ✅ |
+| Emoji and Supplementary Plane characters (Format 12) | ✅ |
+| PUA / icon-font codepoints (graceful .notdef fallback) | ✅ |
 | SDF geometry: Circle, Diamond, Triangle, Parallelogram | ✅ |
 | Fused streaming layout — Mode A (Flow) + Mode B (Fit) | ✅ |
+| **Text alignment: Left, Center, Justified** | ✅ |
+| **Shape-aware justification with river-of-white fallback** | ✅ |
+| **2-character minimum word-break rule** | ✅ |
 | Word-boundary line breaking | ✅ |
+| Skip-line logic for narrow scanlines | ✅ |
 | `Vector128<float32>` SIMD advance summation | ✅ |
 | DrawList SoA output (WebGPU-compatible) | ✅ |
 | LRU shape cache with FNV-1a dirty-flag system | ✅ |
 | TextNode with hit-testing, caret & selection geometry | ✅ |
+
+> **Script support note:** GlyphAura resolves any Unicode codepoint to a glyph ID via cmap
+> (Format 4 for BMP, Format 12 for full Unicode). Complex scripts that require *glyph
+> substitution* (GSUB) — Arabic joining forms, Devanagari conjuncts, Latin ligatures — are
+> not yet substituted; the engine places logical-order glyphs without substitution.
+> RTL visual reordering (full Unicode Bidirectional Algorithm) is planned.
+> For icon fonts (Font Awesome, Material Symbols) that use Private Use Area codepoints,
+> the cmap lookup works transparently — the engine places whichever glyph the font maps.
 
 ---
 
 ## Quick Start
 
 ```bash
-dotnet add package GlyphAuro
+dotnet add package GlyphAura
 ```
 
 ```fsharp
 open System
 open System.IO
-open GlyphAuro
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
+open GlyphAura
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
 
 // 1. Load font (zero-copy — bytes stay in memory, all tables are slices)
 let bytes = File.ReadAllBytes("DejaVuSans.ttf")
@@ -62,7 +78,8 @@ let req = {
     Font       = tables
     Metrics    = metrics
     FontSizePx = 16.0f
-    Mode       = Flow    // or Fit — auto-sizes to fill the shape
+    Mode       = Flow      // or Fit — auto-sizes to fill the shape
+    Alignment  = Center    // Left | Center | Justified
 }
 let result = layout req
 let dl     = fromLayoutResult result
@@ -77,11 +94,42 @@ printfn "%d glyphs placed" dl.GlyphCount
 
 ---
 
+## Text Alignment
+
+GlyphAura supports three text alignment modes, all shape-aware:
+
+### Left (default)
+Standard left-aligned text. The first glyph starts at the scanline's `xStart`.
+
+### Center
+Text is horizontally centered within each scanline:
+```
+Offset = ((xEnd - xStart) - textWidth) / 2
+```
+Each glyph is shifted right by `Offset`. In geometric shapes like circles and
+diamonds, this produces optically balanced text.
+
+### Justified (Shape-Aware Blocksatz)
+Extra space is distributed evenly between word gaps so that text fills the full
+scanline width. Safety limits prevent ugly "rivers of white":
+- **Single-word lines** fall back to Center alignment.
+- If the per-gap expansion exceeds 50% of the line width, Justified falls back to
+  Center to avoid excessively wide word gaps.
+
+### Word-Break Typography
+
+The engine enforces a **2-character minimum** word-break rule: words shorter than
+4 characters (like "the", "a", "an") are never force-split mid-word. Instead, the
+engine skips the narrow scanline and places the word on the next wider line. This
+prevents typographic errors like "t-he" or "th-e".
+
+---
+
 ## Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                           GlyphAuro library                            │
+│                           GlyphAura library                            │
 │                                                                        │
 │  BinaryReader ─► FontProvider ─► CMap / Hmtx / KernLegacy / Gpos      │
 │                                         │                              │
@@ -90,6 +138,7 @@ printfn "%d glyphs placed" dl.GlyphCount
 │                              Shaper (Latin, Mode A)                    │
 │                                         │                              │
 │  Shapes (SDF) ◄─────────── LayoutEngine (Flow / Fit) ◄── SimdAdvance  │
+│                            ┌─ Alignment: Left│Center│Justified ─┐     │
 │                                         │                              │
 │                              DrawList (SoA output)                     │
 │                                         │                              │
@@ -103,115 +152,123 @@ printfn "%d glyphs placed" dl.GlyphCount
 
 ---
 
-## Demo — ASCII Rendering
+## Demo — Rendering Outputs
 
-Running `dotnet run --project demo/GlyphAuro.Demo` produces live renders of all
-four supported shapes. Below are examples from an actual run on DejaVu Sans:
+Running `dotnet run --project demo/GlyphAura.Demo` produces live renders in three
+formats: **ASCII art** (terminal), **PNG** (SkiaSharp bitmap), and **SVG** (vector).
+All rendered output is saved to `demo/output/`.
 
-### Circle — Flow mode (14 px)
+### PNG Renders (SkiaSharp)
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 — The quick brown fox jumps over the lazy dog. (14px, Flow)  │
-└────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 42 / 44 source chars
-  Font size used : 14.0 px
-  Unique glyphs  : 29 (raster requests)
-  Overflow       : none
+High-fidelity raster renders that verify pixel-perfect glyph placement, baseline
+alignment and kerning.  The **green dashed lines** are baselines (clipped to the
+shape width); the **blue polylines** are the SDF shape boundary; the **orange band**
+is the cap-height zone (also clipped to the shape).  With the conservative-interval
+algorithm, no glyph or cap band extends outside the blue shape outline.
 
-                     T h e ·q u ic k ·b r o w n   |
-              ·f|o x·j u   m p s· o v er·t  h e·l a z  |
-          y · d o
-         |                                                    |
-      |                                                          |
-    |                                                              |
-   |                                                                |
-  |                                                                  |
- |                                                                    |
-|                                                                      |
-```
+| Circle — Flow 12 px (long text) | Circle — Fit (auto-size) |
+|---|---|
+| ![circle_flow](demo/output/circle_flow.png) | ![circle_fit](demo/output/circle_fit.png) |
 
-### Circle — Fit mode (auto font size)
+| Diamond — Flow 12 px | Triangle — Flow 11 px (long text) |
+|---|---|
+| ![diamond_flow](demo/output/diamond_flow.png) | ![triangle_flow](demo/output/triangle_flow.png) |
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 (Fit) — Hello, World! GlyphAuro                              │
-└────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 19 / 23 source chars
-  Font size used : 64.8 px   ← binary-searched to fill the circle
-  Unique glyphs  : 15 (raster requests)
+| Parallelogram shear=0.4 | Kerning test — VA Te AV To |
+|---|---|
+| ![parallelogram_flow](demo/output/parallelogram_flow.png) | ![kerning_test](demo/output/kerning_test.png) |
 
-                     |                            |
-                |                                      |
-       H |        e         l   l    o        ,
-      |                                                          |
-    |                                                              |
-·              W        o     r   l         d                          |
-|  !           ·   G        l         y                              |
-```
+#### Center & Justified Alignment
 
-### Diamond — Flow mode (12 px)
+| Circle — Center | Circle — Justified |
+|---|---|
+| ![circle_center](demo/output/circle_center.png) | ![circle_justified](demo/output/circle_justified.png) |
 
-```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│  Diamond 150×150 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
-└───────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 41 / 44 source chars
+| Diamond — Center | |
+|---|---|
+| ![diamond_center](demo/output/diamond_center.png) | |
 
-                                 T
-                             h|e          |
-                          ·|q uic k· bro  w  |
-                       n· fox· j  um ps ·o v    |
-                   e r· the ·l az y· d             |
-                  |                                   |
-              |                                          |
-```
+The kerning test renders common tight pairs at 72 px.  Even horizontal spacing
+between the two characters confirms that GPOS class-based kerning is applied
+correctly (e.g. V→A is pulled together by −348 design units in DejaVu Sans).
 
-### Triangle — Flow mode (12 px)
+### SVG Renders (vector)
+
+Scalable vector output for inspecting curve fidelity at any zoom level.  Zoom in
+to verify that shape boundaries are smooth polylines (not staircase approximations).
+
+| Circle Flow SVG | Kerning Test SVG |
+|---|---|
+| ![circle_flow_svg](demo/output/circle_flow.svg) | ![kerning_test_svg](demo/output/kerning_test.svg) |
+
+| Circle Center SVG | Circle Justified SVG |
+|---|---|
+| ![circle_center_svg](demo/output/circle_center.svg) | ![circle_justified_svg](demo/output/circle_justified.svg) |
+
+### ASCII Rendering (terminal)
+
+The improved ASCII renderer auto-sizes the canvas proportional to the shape
+dimensions and uses **column-collision avoidance** — glyphs on the same row are
+processed left-to-right and bumped to the next column when they would collide.
+This eliminates the previous issue where narrow glyphs (i, l) were overwritten by
+adjacent characters.
+
+#### Circle — Left aligned (12 px, long text)
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  Triangle 300×200 — The quick brown fox jumps over the lazy dog. (12px, Flow)  │
-└────────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 40 / 44 source chars
+  Glyphs placed  : 118 / 122 source chars
+  Font size used : 12.0 px
 
-                                 T|  |
-                               h e      |
-                            · q ui c      |
-                          k|·b r o wn· f     |
-                       ox ·  j ump s ·o e r·    |
-                     the · laz y ·               |
+                                    |    T  h  e  ·q  u  i c k                    |
+                          |       b  r o  w   n  ·f o  x · ju  m    p  s                    |
+                   |    o  v  e  r · th  e  · la  z  y · d  o  g  .· P  a c  k  ·m    y            |
+              |   b  o  x · w   it h  ·f iv  e  · d  o  z e  n  · liq  u  o  r · ju  g  s  .            |
+         |   H  o  w   · v e  x  in  g  l y  ·q  u  ic  k  ·d  a  f t ·z  e  b  r a  s · ju  m    p  !       |
 ```
 
-### Parallelogram — Flow mode (12 px, shear = 0.4)
+#### Circle — Centered (12 px, long text)
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────────────────┐
-│  Parallelogram 250×180 shear=0.4 — The quick brown fox… (12px, Flow)                          │
-└───────────────────────────────────────────────────────────────────────────────────────────────┘
-  Glyphs placed  : 43 / 44 source chars
-
-|                                                      |
-T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
- |                                                       |
-  ·d o g                                                 |
+                                    |          T  h  e  · q  u  ic  k             |
+                          |            b  r o  w   n  ·f o  x  ·j u  m   p  s               |
+                   |       o  v  e r · t h  e  ·l a z  y  ·d  o  g  . ·P  a  c k  · m   y          |
+              |       b  o  x · w   it h  · fi v e  · d  o  z e  n  · liq  u  o  r · ju  g  s  .        |
+         |    H   o  w   ·v  e  x i n  g  ly  · q  u  ic k  · d  a  ft · z e  b  r a  s · ju  m    p  !      |
 ```
 
-### TextNode Cache Demo
+#### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
 
 ```
-┌───────────────────────┐
-│  TextNode Cache Demo  │
-└───────────────────────┘
-  First render  : 330 µs  (17 glyphs)
-  Cached render :   0 µs  (17 glyphs, cache hit)   ← 23 000× speedup
-  After setText : 621 µs  (12 glyphs)
+  Glyphs placed  : 34 / 35 source chars
+
+  G lyp h A u ra :·H ello ·α βγ ·∑ ∫≠  ·☃ ♠  ·ש לום ·😀
+```
+
+#### TextNode Cache Demo
+
+```
+  First render  : ~2300 µs  (17 glyphs)
+  Cached render :     0 µs  (17 glyphs, cache hit)   ← instant on cache hit
+  After setText :  ~500 µs  (11 glyphs)
 ```
 
 ---
 
-## Design Principles
+## Overflow Handling
 
+The engine communicates layout results clearly:
+
+- **`FullSuccess`**: `LastTextIndex >= text.Length` — all text was placed.
+- **`PartialFit`**: `LastTextIndex < text.Length` — the remaining text overflowed
+  the shape. `LastTextIndex` tells you exactly how many characters were placed.
+
+In **Fit mode**, the engine binary-searches for the largest font size where all text
+fits, with an optional minimum font size floor. If even the smallest size overflows,
+the result indicates how much text was placed.
+
+---
+
+## Design Principles
 1. **Zero heap allocations on the hot path.** `ArrayPool<T>` for all temporary
    buffers. `ReadOnlyMemory<byte>` slices for all table data.
 
@@ -228,7 +285,7 @@ T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
 
 ## SceneGraph Integration
 
-GlyphAuro is designed to be the *typesetting back-end* of a separate SceneGraph
+GlyphAura is designed to be the *typesetting back-end* of a separate SceneGraph
 library. The contract is:
 
 ```fsharp
@@ -253,12 +310,84 @@ zero-copy transfer over the Wasm/JS boundary.
 # Build all (lib + tests + demo)
 dotnet build
 
-# Run tests
-dotnet test tests/GlyphAuro.Tests/GlyphAuro.Tests.fsproj --verbosity normal
+# Run tests (223 tests across 14 modules — includes FsCheck property-based tests)
+dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
-# Run demo
-dotnet run --project demo/GlyphAuro.Demo/GlyphAuro.Demo.fsproj
+# Run demo (regenerates demo/output/*.png and *.svg)
+dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 ```
+
+### Test Suite
+
+| Module | Tests | Description |
+|--------|-------|-------------|
+| `BinaryReaderTests` | 10 | Big-endian primitives |
+| `CMapTests` | 15 | cmap Format 4/12, PUA, BMP, SMP |
+| `HmtxTests` | 8 | Glyph advances, bounds |
+| `KernTests` | 12 | Legacy kern binary search |
+| `GposKerningTests` | 15 | GPOS class-based pair positioning |
+| `ShaperTests` | 25 | Word breaking, kerning, surrogate pairs |
+| `LayoutEngineTests` | 30 | Flow, Fit, shapes, conservative intervals |
+| `DrawListTests` | 12 | SoA layout, serialisation |
+| `ShapeCacheTests` | 10 | LRU eviction, dirty flags |
+| `MultiScriptTests` | 18 | Hebrew, Arabic, Greek, Math, Emoji |
+| `PropertyTests` (FsCheck) | **12** | Property-based tests using FsCheck |
+| `EdgeCases` (deterministic) | **5** | Squeeze, vertical overflow, containment |
+| `IndustryStandardTests` | **16** | Cluster mapping, advance accumulation, AABB containment |
+| `AlignmentTests` | **7** | Center/Justified alignment, word-break rules, overflow |
+
+#### Property-Based Tests (FsCheck)
+
+`PropertyTests.fs` uses [FsCheck](https://fscheck.github.io/FsCheck/) + xUnit to
+generate hundreds of random inputs per property and verify invariants:
+
+**1. AABB Containment** — for every placed glyph at `(X, Y)`, X must lie within the
+conservative interval `[xStart, xEnd]` computed for its line band (queried at the
+band midpoint AND both band edges). This ensures glyphs never overflow the shape
+boundary at *any* Y position in the line band (not just at the baseline).
+
+**2. Non-Overlap** — consecutive glyphs on the same baseline must have strictly
+increasing X coordinates (pen-advance monotonicity).
+
+**3. Vertical Containment** — every glyph's full line band `[y − ascent, y − ascent + lineHeight]`
+stays within the shape's bounding box, preventing descenders from protruding below
+the shape bottom.
+
+**4. Edge-Case "Squeeze"** — a long word (e.g. "Donaudampfschifffahrt") in a small
+60 px circle is correctly deferred to wider scanlines; no glyph overflows the
+boundary and at least some glyphs are placed.
+
+#### Industry-Standard Tests
+
+`IndustryStandardTests.fs` validates correctness against HarfBuzz/OpenType conventions:
+
+**1. ClusterIndex Mapping** — every glyph's `ClusterIndex` is within source text bounds,
+monotonically non-decreasing per line, and resolves to the correct `GlyphId` via cmap
+(verifying the fix for the character-drift bug at word-break boundaries).
+
+**2. Advance Accumulation** — glyph X positions match the pen-advance model:
+`X[i] = X[i-1] + advance[i-1] ± kern`. Known kerning pairs ("To", "VA") produce
+measurably tighter spacing than un-kerned pairs.
+
+**3. Analytical AABB Containment** — every glyph X is verified against the *analytical*
+shape formula (Pythagoras for circles, linear interpolation for triangles and diamonds),
+not just the GetInterval API.
+
+**4. FsCheck Properties** — randomised ClusterIndex in-bounds and monotonicity checks
+across hundreds of random shapes and text inputs.
+
+#### Alignment & Overflow Tests
+
+**1. Center alignment** shifts glyphs right compared to Left alignment.
+
+**2. Justified alignment** distributes extra space between word gaps.
+
+**3. Boundary containment** — all glyphs remain within the shape boundary for both
+Center and Justified alignments.
+
+**4. 2-char minimum** — short words like "the" are never force-split.
+
+**5. Overflow detection** — `LastTextIndex < text.Length` correctly indicates partial fit.
 
 Requirements: **.NET 10 SDK**. The library also targets **net8.0** for
 compatibility with older runtimes.
@@ -271,4 +400,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome — please add tests.
 
 ## License
 
-[MIT](LICENSE) — Copyright © 2025 Glyph-Auro Contributors
+[MIT](LICENSE) — Copyright © 2025 GlyphAura Contributors

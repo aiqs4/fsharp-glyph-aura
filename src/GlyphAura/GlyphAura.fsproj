@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- NuGet package metadata -->
+    <PackageId>GlyphAura</PackageId>
+    <Version>0.3.0</Version>
+    <Title>GlyphAura — F# OpenType Shaping &amp; SDF Layout Engine</Title>
+    <Description>
+      Zero-alloc OpenType text shaping and SDF layout engine for F#.
+      Targets Wasm-GC backends. Parses cmap/hmtx/kern/GPOS, shapes Latin text,
+      flows glyphs into arbitrary SDF shapes (Circle, Diamond, Triangle,
+      Parallelogram), and emits a WebGPU-ready DrawList.
+    </Description>
+    <PackageTags>fsharp;opentype;font;shaping;layout;sdf;wasm;webgpu;scenograph;typography</PackageTags>
+    <PackageProjectUrl>https://github.com/aiqs4/fsharp-glyph-aura</PackageProjectUrl>
+    <PackageReleaseNotes>See CHANGELOG.md for release notes.</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="BinaryReader.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="FontProvider.fs" />
+    <Compile Include="CMap.fs" />
+    <Compile Include="Hmtx.fs" />
+    <Compile Include="KernLegacy.fs" />
+    <Compile Include="GposKerning.fs" />
+    <Compile Include="TextAnalyzer.fs" />
+    <Compile Include="Shaper.fs" />
+    <Compile Include="Shapes.fs" />
+    <Compile Include="SimdAdvance.fs" />
+    <Compile Include="LayoutEngine.fs" />
+    <Compile Include="DrawList.fs" />
+    <Compile Include="ShapeCache.fs" />
+    <Compile Include="TextNode.fs" />
+  </ItemGroup>
+
+</Project>
