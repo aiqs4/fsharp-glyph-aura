@@ -897,6 +897,10 @@ module LayoutEngineTests =
     let ``layout Fit mode into diamond finds font size`` () =
         let tables, metrics = loadFontForLayout()
         // Large diamond so "Hello World" fits even with conservative band-midpoint widths.
+        // "Conservative" here means the layout engine queries GetInterval at the band midpoint
+        // (y − ascent + lineHeight/2) rather than the baseline, returning a narrower chord at
+        // the shape extremities.  A 600 px-wide equatorial diamond leaves ample room for the
+        // two-word phrase at any font size the binary search might choose.
         let shape = Shapes.diamond { X = 300.0f; Y = 300.0f } 300.0f 300.0f
         let text = "Hello World"
         let req = {
@@ -2238,6 +2242,10 @@ module ScanlineTests =
         // GetInterval must match x_offset = sqrt(r² − |y − cy|²)
         let cx, cy, r = 150.0f, 150.0f, 150.0f
         let circle = Shapes.circle { X = cx; Y = cy } r
+        // 6.985 = bbox.Top + lineHeight/2 for a 12 px DejaVu Sans font
+        //         (lineHeight ≈ 13.97 px → half = 6.985 px).
+        // This is the band midpoint of the very first scanline, which is the y value
+        // layoutAtSize passes to GetInterval after the Bug 2 fix.
         let tests = [ 6.985f; 50.0f; 75.0f; 150.0f; 200.0f; 280.0f ]
         for y in tests do
             let dy = abs (y - cy)
