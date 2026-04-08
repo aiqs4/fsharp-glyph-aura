@@ -30,7 +30,11 @@ SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
 | PUA / icon-font codepoints (graceful .notdef fallback) | ✅ |
 | SDF geometry: Circle, Diamond, Triangle, Parallelogram | ✅ |
 | Fused streaming layout — Mode A (Flow) + Mode B (Fit) | ✅ |
+| **Text alignment: Left, Center, Justified** | ✅ |
+| **Shape-aware justification with river-of-white fallback** | ✅ |
+| **2-character minimum word-break rule** | ✅ |
 | Word-boundary line breaking | ✅ |
+| Skip-line logic for narrow scanlines | ✅ |
 | `Vector128<float32>` SIMD advance summation | ✅ |
 | DrawList SoA output (WebGPU-compatible) | ✅ |
 | LRU shape cache with FNV-1a dirty-flag system | ✅ |
@@ -74,7 +78,8 @@ let req = {
     Font       = tables
     Metrics    = metrics
     FontSizePx = 16.0f
-    Mode       = Flow    // or Fit — auto-sizes to fill the shape
+    Mode       = Flow      // or Fit — auto-sizes to fill the shape
+    Alignment  = Center    // Left | Center | Justified
 }
 let result = layout req
 let dl     = fromLayoutResult result
@@ -86,6 +91,37 @@ let dl     = fromLayoutResult result
 // dl.GlyphRasterRequests : uint16[] — sorted unique IDs to pre-warm the atlas
 printfn "%d glyphs placed" dl.GlyphCount
 ```
+
+---
+
+## Text Alignment
+
+GlyphAura supports three text alignment modes, all shape-aware:
+
+### Left (default)
+Standard left-aligned text. The first glyph starts at the scanline's `xStart`.
+
+### Center
+Text is horizontally centered within each scanline:
+```
+Offset = ((xEnd - xStart) - textWidth) / 2
+```
+Each glyph is shifted right by `Offset`. In geometric shapes like circles and
+diamonds, this produces optically balanced text.
+
+### Justified (Shape-Aware Blocksatz)
+Extra space is distributed evenly between word gaps so that text fills the full
+scanline width. Safety limits prevent ugly "rivers of white":
+- **Single-word lines** fall back to Center alignment.
+- If the per-gap expansion exceeds 50% of the line width, Justified falls back to
+  Center to avoid excessively wide word gaps.
+
+### Word-Break Typography
+
+The engine enforces a **2-character minimum** word-break rule: words shorter than
+4 characters (like "the", "a", "an") are never force-split mid-word. Instead, the
+engine skips the narrow scanline and places the word on the next wider line. This
+prevents typographic errors like "t-he" or "th-e".
 
 ---
 
@@ -102,6 +138,7 @@ printfn "%d glyphs placed" dl.GlyphCount
 │                              Shaper (Latin, Mode A)                    │
 │                                         │                              │
 │  Shapes (SDF) ◄─────────── LayoutEngine (Flow / Fit) ◄── SimdAdvance  │
+│                            ┌─ Alignment: Left│Center│Justified ─┐     │
 │                                         │                              │
 │                              DrawList (SoA output)                     │
 │                                         │                              │
@@ -141,6 +178,16 @@ algorithm, no glyph or cap band extends outside the blue shape outline.
 |---|---|
 | ![parallelogram_flow](demo/output/parallelogram_flow.png) | ![kerning_test](demo/output/kerning_test.png) |
 
+#### Center & Justified Alignment
+
+| Circle — Center | Circle — Justified |
+|---|---|
+| ![circle_center](demo/output/circle_center.png) | ![circle_justified](demo/output/circle_justified.png) |
+
+| Diamond — Center | |
+|---|---|
+| ![diamond_center](demo/output/diamond_center.png) | |
+
 The kerning test renders common tight pairs at 72 px.  Even horizontal spacing
 between the two characters confirms that GPOS class-based kerning is applied
 correctly (e.g. V→A is pulled together by −348 design units in DejaVu Sans).
@@ -154,122 +201,48 @@ to verify that shape boundaries are smooth polylines (not staircase approximatio
 |---|---|
 | ![circle_flow_svg](demo/output/circle_flow.svg) | ![kerning_test_svg](demo/output/kerning_test.svg) |
 
+| Circle Center SVG | Circle Justified SVG |
+|---|---|
+| ![circle_center_svg](demo/output/circle_center.svg) | ![circle_justified_svg](demo/output/circle_justified.svg) |
+
 ### ASCII Rendering (terminal)
 
-The ASCII art correctly places every glyph character *inside* the shape boundary `|`.
-The shape boundary is anchored to each row's actual baseline Y from the layout engine
-so glyphs never appear outside the edge.  All renders below were generated from the
-current code and reflect the corrected glyph-positioning algorithm — the
-**conservative-interval scanline query** (midpoint + band-top + band-bottom
-intersection) ensures that the full line band, from cap height down to descender,
-stays inside the shape boundary at every Y position, with no horizontal or vertical
-overflow.  Each glyph's `ClusterIndex` tracks the original source character position,
-so word-break whitespace skipping never causes character drift in rendered output.
+The improved ASCII renderer auto-sizes the canvas proportional to the shape
+dimensions and uses **column-collision avoidance** — glyphs on the same row are
+processed left-to-right and bumped to the next column when they would collide.
+This eliminates the previous issue where narrow glyphs (i, l) were overwritten by
+adjacent characters.
 
-#### Circle — Flow mode (12 px, long text)
+#### Circle — Left aligned (12 px, long text)
 
 ```
   Glyphs placed  : 118 / 122 source chars
   Font size used : 12.0 px
-  Unique glyphs  : 32 (raster requests)
-  Overflow       : none
 
-                      |  Th e ·q u c k           |
-                     |                            |
-                |   b ro w n ·fo x ju m  p s           |
-           |   ov e r·th e ·a z y·d o g .·Pa ck ·m  y       |
-        |  bo x ·w ith ·five ·d oz e n ·iq u o r·u g s .       |
-      |H  ow  ·ve x ing ly ·q uic k·d a ft·ze b ra s·ju m  p !   |
-    |                                                              |
-   |                                                                |
-  |                                                                  |
- |                                                                    |
-|                                                                      |
+                                    |    T  h  e  ·q  u  i c k                    |
+                          |       b  r o  w   n  ·f o  x · ju  m    p  s                    |
+                   |    o  v  e  r · th  e  · la  z  y · d  o  g  .· P  a c  k  ·m    y            |
+              |   b  o  x · w   it h  ·f iv  e  · d  o  z e  n  · liq  u  o  r · ju  g  s  .            |
+         |   H  o  w   · v e  x  in  g  l y  ·q  u  ic  k  ·d  a  f t ·z  e  b  r a  s · ju  m    p  !       |
 ```
 
-#### Circle — Fit mode (auto font size)
+#### Circle — Centered (12 px, long text)
 
 ```
-  Glyphs placed  : 21 / 23 source chars
-  Font size used : 61.2 px   (binary-searched to fill the circle)
-  Unique glyphs  : 16 (raster requests)
-  Overflow       : none
-
-                     |                            |
-                |                                      |
-            |                                              |
-       |    H          e        l   l   o        ,              |
-      |                                                          |
-    |                                                              |
-   |                                                                |
-  |                                                                  |
- |                                                                    |
-|    W             o        r     l   d        !                       |
-|                                                                      |
- | G          l   y        p        h         A                       |
-  |                                                                  |
-              |     u        r     a                     |
-```
-
-#### Diamond — Flow mode (12 px)
-
-```
-  Glyphs placed  : 40 / 44 source chars
-
-                                 |T   |
-                                 |     |
-                             |  h e       |
-                          |  q uic k         |
-                       | b ro w  n·fo x         |
-                   |  ju m  ps ·o ve r·th e         |
-                |  laz y d o g .                       |
-              |                                          |
-```
-
-#### Triangle — Flow mode (11 px, long text)
-
-```
-  Glyphs placed  : 114 / 122 source chars
-
-                                  T  |
-                               | h e    |
-                               |        |
-                             | q uick     |
-                           | bro w n        |
-                           |                 |
-                        | fo x·ju m p s        |
-                      | o ve r·the ·laz y        |
-                      |                          |
-                    | do g ·P ac k·m  y·b ox       |
-                  |w  th ·fv e d o ze n·liqu o r     |
-               | jug s ·H o w ·ve xin g y ·qu ick       |
-             | da ft·ze br as ju m p !                    |
-```
-
-#### Parallelogram — Flow mode (12 px, shear = 0.4)
-
-```
-  Glyphs placed  : 43 / 44 source chars
-
-|                                                      |
-|Th e ·qu ick ·bro w n ·fox ·u m  ps ·ov e r·the        |
- |                                                       |
-  laz y·d o g.                                            |
+                                    |          T  h  e  · q  u  ic  k             |
+                          |            b  r o  w   n  ·f o  x  ·j u  m   p  s               |
+                   |       o  v  e r · t h  e  ·l a z  y  ·d  o  g  . ·P  a  c k  · m   y          |
+              |       b  o  x · w   it h  · fi v e  · d  o  z e  n  · liq  u  o  r · ju  g  s  .        |
+         |    H   o  w   ·v  e  x i n  g  ly  · q  u  ic k  · d  a  ft · z e  b  r a  s · ju  m    p  !      |
 ```
 
 #### Multi-script — Latin + Greek + Hebrew + Math + Emoji (14 px)
 
 ```
   Glyphs placed  : 34 / 35 source chars
-  Scripts        : Latin, Greek (αβγ), Math (∑∫≠), Symbols (☃♠), Hebrew (שלום), Emoji (😀)
 
-  Gyph Aura·Helo·αβγ·∑∫≠·☃♠ ש לם·😀
+  G lyp h A u ra :·H ello ·α βγ ·∑ ∫≠  ·☃ ♠  ·ש לום ·😀
 ```
-
-> **Note:** Some narrow characters (like 'i', 'l') may appear missing in ASCII due to
-> the fixed-width grid — two proportional-width glyphs can map to the same column.
-> The PNG and SVG renders (below) use real pixel coordinates and display every character
-> correctly.
 
 #### TextNode Cache Demo
 
@@ -278,6 +251,20 @@ so word-break whitespace skipping never causes character drift in rendered outpu
   Cached render :     0 µs  (17 glyphs, cache hit)   ← instant on cache hit
   After setText :  ~500 µs  (11 glyphs)
 ```
+
+---
+
+## Overflow Handling
+
+The engine communicates layout results clearly:
+
+- **`FullSuccess`**: `LastTextIndex >= text.Length` — all text was placed.
+- **`PartialFit`**: `LastTextIndex < text.Length` — the remaining text overflowed
+  the shape. `LastTextIndex` tells you exactly how many characters were placed.
+
+In **Fit mode**, the engine binary-searches for the largest font size where all text
+fits, with an optional minimum font size floor. If even the smallest size overflows,
+the result indicates how much text was placed.
 
 ---
 
@@ -323,7 +310,7 @@ zero-copy transfer over the Wasm/JS boundary.
 # Build all (lib + tests + demo)
 dotnet build
 
-# Run tests (216 tests across 13 modules — includes FsCheck property-based tests)
+# Run tests (223 tests across 14 modules — includes FsCheck property-based tests)
 dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
 # Run demo (regenerates demo/output/*.png and *.svg)
@@ -347,6 +334,7 @@ dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 | `PropertyTests` (FsCheck) | **12** | Property-based tests using FsCheck |
 | `EdgeCases` (deterministic) | **5** | Squeeze, vertical overflow, containment |
 | `IndustryStandardTests` | **16** | Cluster mapping, advance accumulation, AABB containment |
+| `AlignmentTests` | **7** | Center/Justified alignment, word-break rules, overflow |
 
 #### Property-Based Tests (FsCheck)
 
@@ -387,6 +375,19 @@ not just the GetInterval API.
 
 **4. FsCheck Properties** — randomised ClusterIndex in-bounds and monotonicity checks
 across hundreds of random shapes and text inputs.
+
+#### Alignment & Overflow Tests
+
+**1. Center alignment** shifts glyphs right compared to Left alignment.
+
+**2. Justified alignment** distributes extra space between word gaps.
+
+**3. Boundary containment** — all glyphs remain within the shape boundary for both
+Center and Justified alignments.
+
+**4. 2-char minimum** — short words like "the" are never force-split.
+
+**5. Overflow detection** — `LastTextIndex < text.Length` correctly indicates partial fit.
 
 Requirements: **.NET 10 SDK**. The library also targets **net8.0** for
 compatibility with older runtimes.

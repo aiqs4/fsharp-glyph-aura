@@ -490,3 +490,176 @@ type ClusterIndexProperties() =
             if result.GlyphBuffer.Length > 0 then
                 ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
             ok
+
+// ==========================================================================
+// SECTION 6 — Text Alignment Tests
+// ==========================================================================
+
+module AlignmentTests =
+
+    let private loadFont () =
+        let path = Path.Combine(AppContext.BaseDirectory, "TestData", "DejaVuSans.ttf")
+        let bytes = File.ReadAllBytes(path)
+        match FontProvider.load (ReadOnlyMemory(bytes)) with
+        | Ok pair -> pair
+        | Error msg -> failwith msg
+
+    let private layoutWithAlignment (text: string) (alignment: TextAlignment) =
+        let tables, metrics = loadFont()
+        let shape = circle { X = 150.0f; Y = 150.0f } 150.0f
+        let req = {
+            Text       = ReadOnlyMemory(text.ToCharArray())
+            Shape      = shape
+            Font       = tables
+            Metrics    = metrics
+            FontSizePx = 12.0f
+            Mode       = Flow
+            Alignment  = alignment
+        }
+        let result = layout req
+        let glyphs = result.Glyphs.ToArray()
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+        glyphs, result
+
+    [<Fact>]
+    let ``Center alignment shifts glyphs right compared to Left`` () =
+        let leftGlyphs, _ = layoutWithAlignment "The quick brown fox jumps over the lazy dog." Left
+        let centerGlyphs, _ = layoutWithAlignment "The quick brown fox jumps over the lazy dog." Center
+
+        // Both should produce the same number of glyphs
+        Assert.Equal(leftGlyphs.Length, centerGlyphs.Length)
+        Assert.True(leftGlyphs.Length > 0, "Should place some glyphs")
+
+        // Centered glyphs on each line should have their first glyph X >= left-aligned X
+        let leftLines =
+            leftGlyphs
+            |> Array.groupBy (fun gp -> System.MathF.Round(gp.Y, 1))
+            |> Array.map (fun (y, gs) -> y, gs |> Array.minBy (fun g -> g.X))
+        let centerLines =
+            centerGlyphs
+            |> Array.groupBy (fun gp -> System.MathF.Round(gp.Y, 1))
+            |> Array.map (fun (y, gs) -> y, gs |> Array.minBy (fun g -> g.X))
+
+        // At least some lines should have the centered first glyph shifted right
+        let shiftedCount =
+            Array.zip leftLines centerLines
+            |> Array.filter (fun ((_, lg), (_, cg)) -> cg.X > lg.X + 0.5f)
+            |> Array.length
+
+        Assert.True(shiftedCount > 0,
+            "At least some centered lines should shift right relative to left-aligned")
+
+    [<Fact>]
+    let ``Justified alignment distributes space between words`` () =
+        let tables, metrics = loadFont()
+        // Wide rectangle so all text fits on one line with extra space
+        let shape = parallelogram { X = 400.0f; Y = 20.0f } 780.0f 40.0f 0.0f
+        let text = "The quick brown fox"
+        let leftReq = {
+            Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+            Font = tables; Metrics = metrics; FontSizePx = 14.0f
+            Mode = Flow; Alignment = Left
+        }
+        let justReq = { leftReq with Alignment = Justified }
+        let leftResult = layout leftReq
+        let justResult = layout justReq
+        let leftGlyphs = leftResult.Glyphs.ToArray()
+        let justGlyphs = justResult.Glyphs.ToArray()
+
+        // Same glyph count
+        Assert.Equal(leftGlyphs.Length, justGlyphs.Length)
+
+        // Justified last glyph should be further right than left-aligned
+        if justGlyphs.Length > 1 then
+            let leftLast = leftGlyphs |> Array.maxBy (fun g -> g.X)
+            let justLast = justGlyphs |> Array.maxBy (fun g -> g.X)
+            Assert.True(justLast.X >= leftLast.X,
+                sprintf "Justified last glyph X=%.1f should be >= left-aligned X=%.1f" justLast.X leftLast.X)
+
+        if leftResult.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(leftResult.GlyphBuffer, false)
+        if justResult.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(justResult.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Center alignment: all glyphs remain within shape boundary`` () =
+        let glyphs, _ = layoutWithAlignment "The quick brown fox jumps over the lazy dog." Center
+        let shape = circle { X = 150.0f; Y = 150.0f } 150.0f
+
+        for gp in glyphs do
+            match shape.GetInterval gp.Y with
+            | ValueNone ->
+                Assert.True(false, sprintf "Centered glyph at y=%.1f is outside shape" gp.Y)
+            | ValueSome(struct (xs, xe)) ->
+                Assert.True(gp.X >= xs - 1.0f,
+                    sprintf "Centered glyph at (%.1f, %.1f) is left of boundary xs=%.1f" gp.X gp.Y xs)
+                Assert.True(gp.X <= xe + 1.0f,
+                    sprintf "Centered glyph at (%.1f, %.1f) is right of boundary xe=%.1f" gp.X gp.Y xe)
+
+    [<Fact>]
+    let ``Justified alignment: all glyphs remain within shape boundary`` () =
+        let glyphs, _ = layoutWithAlignment "The quick brown fox jumps over the lazy dog." Justified
+        let shape = circle { X = 150.0f; Y = 150.0f } 150.0f
+
+        for gp in glyphs do
+            match shape.GetInterval gp.Y with
+            | ValueNone ->
+                Assert.True(false, sprintf "Justified glyph at y=%.1f is outside shape" gp.Y)
+            | ValueSome(struct (xs, xe)) ->
+                Assert.True(gp.X >= xs - 1.0f,
+                    sprintf "Justified glyph at (%.1f, %.1f) is left of boundary xs=%.1f" gp.X gp.Y xs)
+                Assert.True(gp.X <= xe + 1.0f,
+                    sprintf "Justified glyph at (%.1f, %.1f) is right of boundary xe=%.1f" gp.X gp.Y xe)
+
+    [<Fact>]
+    let ``2-char minimum rule: short word 'the' is not split`` () =
+        let tables, metrics = loadFont()
+        // Very narrow shape — "the" shouldn't fit on a narrow scanline
+        let shape = diamond { X = 50.0f; Y = 50.0f } 15.0f 50.0f
+        let text = "the"
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+            Font = tables; Metrics = metrics; FontSizePx = 12.0f
+            Mode = Flow; Alignment = Left
+        }
+        let result = layout req
+        let glyphs = result.Glyphs.ToArray()
+
+        // If any glyphs are placed, the word "the" must be placed as a whole (3 chars)
+        if glyphs.Length > 0 then
+            let uniqueYs = glyphs |> Array.map (fun g -> System.MathF.Round(g.Y, 1)) |> Array.distinct
+            Assert.True(uniqueYs.Length = 1,
+                sprintf "'the' should not be split across lines; found %d distinct Y values" uniqueYs.Length)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Overflow detection: LastTextIndex < text length means partial fit`` () =
+        let tables, metrics = loadFont()
+        // Very small circle with lots of text
+        let shape = circle { X = 20.0f; Y = 20.0f } 20.0f
+        let text = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs."
+        let req = {
+            Text = ReadOnlyMemory(text.ToCharArray()); Shape = shape
+            Font = tables; Metrics = metrics; FontSizePx = 12.0f
+            Mode = Flow; Alignment = Left
+        }
+        let result = layout req
+
+        Assert.True(result.LastTextIndex < text.Length,
+            sprintf "Expected overflow: LastTextIndex=%d should be < text.Length=%d" result.LastTextIndex text.Length)
+
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``All three alignments produce same glyph count for same input`` () =
+        let text = "The quick brown fox jumps over the lazy dog."
+        let leftGlyphs, _ = layoutWithAlignment text Left
+        let centerGlyphs, _ = layoutWithAlignment text Center
+        let justGlyphs, _ = layoutWithAlignment text Justified
+
+        Assert.Equal(leftGlyphs.Length, centerGlyphs.Length)
+        Assert.Equal(leftGlyphs.Length, justGlyphs.Length)
