@@ -1,4 +1,4 @@
-namespace GlyphAuro
+namespace GlyphAura
 
 open System
 

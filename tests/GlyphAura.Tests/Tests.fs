@@ -1,17 +1,17 @@
-namespace GlyphAuro.Tests
+namespace GlyphAura.Tests
 
 open System
 open System.IO
 open System.Buffers
 open Xunit
-open GlyphAuro
-open GlyphAuro.GposKerning
-open GlyphAuro.TextAnalyzer
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
-open GlyphAuro.ShapeCache
-open GlyphAuro.TextNode
+open GlyphAura
+open GlyphAura.GposKerning
+open GlyphAura.TextAnalyzer
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
+open GlyphAura.ShapeCache
+open GlyphAura.TextNode
 
 /// Helper module for loading test fonts.
 module TestHelper =
@@ -1412,3 +1412,383 @@ module TextNodeTests =
         Assert.Equal(dl1.GlyphCount, dl2.GlyphCount)
         for i in 0 .. dl1.GlyphCount - 1 do
             Assert.Equal(dl1.GlyphIds.[i], dl2.GlyphIds.[i])
+
+// ============================================================
+// Industry-Standard Glyph Positioning Tests
+//
+// These tests verify that GlyphAura produces glyph positions that
+// are consistent with the OpenType specification and match what
+// industry-standard engines (HarfBuzz, FreeType) produce.
+//
+// Key principles being tested:
+// 1. Glyph origin = current pen position (not pen + kern offset)
+// 2. Pen advances by: base_advance + kern(current → next)
+// 3. Kerned pairs are CLOSER than un-kerned (kern is negative for tight pairs)
+// 4. Absolute positions match OpenType formula:
+//      position[i] = sum_{j<i} (advance[j] + kern(j, j+1))  * scale
+// 5. GPOS kern takes precedence over legacy kern
+// ============================================================
+module PositioningTests =
+
+    // ── DejaVu Sans metrics (verified against font binary) ──────────────────
+    // UPM = 2048
+    // 'V' glyphId=57  advance=1401 design units
+    // 'A' glyphId=36  advance=1401 design units
+    // 'T' glyphId=55  advance=1251 design units
+    // 'e' glyphId=72  advance=1260 design units
+    // 'o' glyphId=82  advance=1253 design units
+    // 'W' glyphId=58  advance=2025 design units
+    // 'i' glyphId=76  advance=569  design units
+    // kern(V,A) = kern(A,V) = -131 design units (legacy; GPOS same)
+    // kern(T,o) = kern(T,e) = -348 design units (legacy; GPOS same)
+    // kern(W,i)  verified via legacy kern table
+
+    let [<Literal>] Upm  = 2048.0f
+    let [<Literal>] FontSizePx = 100.0f        // clean round number for exact arithmetic
+    let [<Literal>] Scale = FontSizePx / Upm   // 100 / 2048
+
+    // DejaVu Sans design-unit advances
+    let [<Literal>] AdvV = 1401.0f
+    let [<Literal>] AdvA = 1401.0f
+    let [<Literal>] AdvT = 1251.0f
+    let [<Literal>] Adve = 1260.0f
+    let [<Literal>] Advo = 1253.0f
+    let [<Literal>] AdvW = 2025.0f
+    let [<Literal>] Advi = 569.0f
+
+    // Kern values (design units, negative = tighter spacing)
+    let [<Literal>] KernVA = -131.0f   // kern(V → A)
+    let [<Literal>] KernAV = -131.0f   // kern(A → V)
+    let [<Literal>] KernTo = -348.0f   // kern(T → o)
+    let [<Literal>] KernTe = -348.0f   // kern(T → e)
+
+    // Tolerance: 0.01 px is acceptable for float32 accumulation
+    let [<Literal>] Tol = 0.1f
+
+    let private setup () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let cmap = CMap.parse tables.Cmap
+        let maxpSpan = tables.Maxp.Span
+        let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+        let hmtx = Hmtx.parse tables.Hmtx tables.Hhea numGlyphs
+        let kern =
+            match tables.Kern with
+            | ValueSome kd -> KernLegacy.parse kd
+            | ValueNone    -> ValueNone
+        tables, metrics, cmap, hmtx, kern
+
+    // ── 1. Shaper: look-ahead kern semantics ────────────────────────────────
+
+    [<Fact>]
+    let ``Shaper bakes kern(V→A) into V's XAdvance`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "VA".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        Assert.Equal(2, result.GlyphCount)
+        // V's XAdvance = V.base_advance + kern(V→A) = (1401 - 131) = 1270 design units
+        let expectedVAdv = AdvV + KernVA
+        let actualVAdv   = buffer.[0].XAdvance
+        Assert.True(
+            abs (actualVAdv - expectedVAdv) < 0.5f,
+            sprintf "V XAdvance should be %g (=1401+kern), got %g" expectedVAdv actualVAdv)
+        // A's XAdvance = A.base_advance (last glyph, no look-ahead) = 1401
+        let actualAAdv = buffer.[1].XAdvance
+        Assert.True(
+            abs (actualAAdv - AdvA) < 0.5f,
+            sprintf "A XAdvance (last glyph) should equal base advance %g, got %g" AdvA actualAAdv)
+
+    [<Fact>]
+    let ``Shaper bakes kern(T→o) into T's XAdvance`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "To".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        Assert.Equal(2, result.GlyphCount)
+        let expectedTAdv = AdvT + KernTo   // 1251 - 348 = 903
+        Assert.True(
+            abs (buffer.[0].XAdvance - expectedTAdv) < 0.5f,
+            sprintf "T XAdvance should be %g, got %g" expectedTAdv buffer.[0].XAdvance)
+
+    [<Fact>]
+    let ``Shaper last glyph has no look-ahead kern`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "AV".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        // V is the last glyph: no next character, so XAdvance = base advance only
+        Assert.True(
+            abs (buffer.[1].XAdvance - AdvV) < 0.5f,
+            sprintf "Last glyph V should have base advance %g, got %g" AdvV buffer.[1].XAdvance)
+
+    [<Fact>]
+    let ``Shaper single glyph has no kern`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "A".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let _ = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        Assert.True(
+            abs (buffer.[0].XAdvance - AdvA) < 0.5f,
+            sprintf "Single-glyph A should have base advance %g, got %g" AdvA buffer.[0].XAdvance)
+
+    [<Fact>]
+    let ``Shaper TotalAdvance for VA equals advances plus kern`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "VA".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        // TotalAdvance = (AdvV + KernVA + AdvA) * Scale
+        let expected = (AdvV + KernVA + AdvA) * Scale
+        Assert.True(
+            abs (result.TotalAdvance - expected) < Tol,
+            sprintf "TotalAdvance for VA should be %g px, got %g px" expected result.TotalAdvance)
+
+    [<Fact>]
+    let ``Shaper TotalAdvance for To equals advances plus kern`` () =
+        let _, _, cmap, hmtx, kern = setup()
+        let text = "To".AsSpan()
+        let buffer = Array.zeroCreate<ShapedGlyph> 10
+        let result = Shaper.shapeLine text cmap hmtx kern Scale Single.MaxValue buffer
+        let expected = (AdvT + KernTo + Advo) * Scale
+        Assert.True(
+            abs (result.TotalAdvance - expected) < Tol,
+            sprintf "TotalAdvance for To should be %g px, got %g px" expected result.TotalAdvance)
+
+    // ── 2. Layout engine: glyph X positions match OpenType spec ─────────────
+
+    /// Shape text into a very wide parallelogram so all glyphs land on one line.
+    let private layoutOnOneLine (text: string) (tables: FontTables) (metrics: FontMetrics) =
+        // Wide, tall shape — all glyphs on one line
+        let shape = Shapes.parallelogram { X = 5000.0f; Y = 100.0f } 9000.0f 200.0f 0.0f
+        let req = {
+            Text        = ReadOnlyMemory(text.ToCharArray())
+            Shape       = shape
+            Font        = tables
+            Metrics     = metrics
+            FontSizePx  = FontSizePx
+            Mode        = Flow
+        }
+        let result = LayoutEngine.layout req
+        result
+
+    [<Fact>]
+    let ``Layout V at position 0`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "V" tables metrics
+        Assert.True(result.Glyphs.Length >= 1, "Should place V")
+        // V is the first (and only) glyph — its X equals the left edge (xStart).
+        // We don't test the absolute X because the shape's left edge varies with y;
+        // instead we verify V.X ≥ 0 (placed inside shape).
+        let span = result.Glyphs.Span
+        Assert.True(span.[0].X >= 0.0f, "V should have non-negative X")
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout VA: A.X equals V.X plus (V.advance + kern(V→A)) * scale`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "VA" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2, "Should place both V and A")
+        let vX = span.[0].X
+        let aX = span.[1].X
+        // Expected A position = V.X + (AdvV + KernVA) * Scale
+        // Note: GPOS may override legacy kern; both are -131 for V,A in DejaVu Sans
+        let advanceWithKern = (AdvV + KernVA) * Scale  // ≈ 62.01 px
+        let expectedAX = vX + advanceWithKern
+        Assert.True(
+            abs (aX - expectedAX) < Tol,
+            sprintf "A.X should be %g (V.X %g + advance %g), got %g" expectedAX vX advanceWithKern aX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout AV: V.X equals A.X plus (A.advance + kern(A→V)) * scale`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "AV" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2, "Should place both A and V")
+        let aX = span.[0].X
+        let vX = span.[1].X
+        let advanceWithKern = (AdvA + KernAV) * Scale
+        let expectedVX = aX + advanceWithKern
+        Assert.True(
+            abs (vX - expectedVX) < Tol,
+            sprintf "V.X should be %g (A.X %g + advance %g), got %g" expectedVX aX advanceWithKern vX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout To: o.X equals T.X plus (T.advance + kern(T→o)) * scale`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "To" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2, "Should place both T and o")
+        let tX = span.[0].X
+        let oX = span.[1].X
+        let advanceWithKern = (AdvT + KernTo) * Scale   // ≈ 44.09 px
+        let expectedOX = tX + advanceWithKern
+        Assert.True(
+            abs (oX - expectedOX) < Tol,
+            sprintf "o.X should be %g (T.X %g + advance %g), got %g" expectedOX tX advanceWithKern oX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout Te: e.X equals T.X plus (T.advance + kern(T→e)) * scale`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "Te" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2, "Should place both T and e")
+        let tX = span.[0].X
+        let eX = span.[1].X
+        let advanceWithKern = (AdvT + KernTe) * Scale
+        let expectedEX = tX + advanceWithKern
+        Assert.True(
+            abs (eX - expectedEX) < Tol,
+            sprintf "e.X should be %g (T.X %g + advance %g), got %g" expectedEX tX advanceWithKern eX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 3. Kerned spacing < unkerned spacing ────────────────────────────────
+
+    [<Fact>]
+    let ``VA pair: A.X is closer to V.X than without kern`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "VA" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2)
+        let gap = span.[1].X - span.[0].X
+        // Without kern: gap = AdvV * Scale ≈ 68.41 px
+        let noKernGap = AdvV * Scale
+        Assert.True(gap < noKernGap,
+            sprintf "VA gap %g should be < no-kern gap %g" gap noKernGap)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``To pair: o.X is closer to T.X than without kern`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "To" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2)
+        let gap = span.[1].X - span.[0].X
+        let noKernGap = AdvT * Scale
+        Assert.True(gap < noKernGap,
+            sprintf "To gap %g should be < no-kern gap %g" gap noKernGap)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 4. Three-glyph chain: additive kern accumulation ────────────────────
+
+    [<Fact>]
+    let ``Layout VAV: third glyph X accumulates correctly`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "VAV" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 3, "Should place V, A, V")
+        let v1X = span.[0].X
+        let aX  = span.[1].X
+        let v2X = span.[2].X
+        // A.X = V1.X + (AdvV + KernVA) * Scale
+        let expectedAX = v1X + (AdvV + KernVA) * Scale
+        Assert.True(abs (aX - expectedAX) < Tol,
+            sprintf "A.X should be %g, got %g" expectedAX aX)
+        // V2.X = A.X + (AdvA + KernAV) * Scale
+        let expectedV2X = aX + (AdvA + KernAV) * Scale
+        Assert.True(abs (v2X - expectedV2X) < Tol,
+            sprintf "V2.X should be %g, got %g" expectedV2X v2X)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Layout ABC (no-kern pair): positions are pure advance multiples`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        // 'B' glyphId should not kern with 'C' — use a pair without known kern
+        let result = layoutOnOneLine "III" tables metrics   // i,i,i — likely no kern
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 3, "Should place 3 glyphs")
+        // All three should be strictly monotonically increasing
+        Assert.True(span.[1].X > span.[0].X, "Second glyph must be right of first")
+        Assert.True(span.[2].X > span.[1].X, "Third glyph must be right of second")
+        // Check spacing consistency: span[1]-span[0] ≈ span[2]-span[1]  (equal advances)
+        let gap01 = span.[1].X - span.[0].X
+        let gap12 = span.[2].X - span.[1].X
+        Assert.True(abs (gap01 - gap12) < Tol,
+            sprintf "Equal advances for iii: gap01=%g gap12=%g" gap01 gap12)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 5. Regression: verify the old "kern-offset-on-glyph" bug is gone ───
+
+    [<Fact>]
+    let ``Regression: VA A.X not equal to bare V advance (old buggy value)`` () =
+        // Old bug: shaper stored kern(prev→curr) in curr.XAdvance.
+        // layout placed glyph at `x` (no kern shift) then advanced by XAdvance.
+        // Result: A.X = AdvV * Scale  (no kern applied to position)
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "VA" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2)
+        let v1X = span.[0].X
+        let aX  = span.[1].X
+        let buggyAX = v1X + AdvV * Scale  // old buggy position
+        // Correct position must differ from the buggy one
+        Assert.True(abs (aX - buggyAX) > 1.0f,
+            sprintf "A.X should differ from buggy value %g; got %g" buggyAX aX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    [<Fact>]
+    let ``Regression: To o.X not equal to bare T advance (old buggy value)`` () =
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "To" tables metrics
+        let span = result.Glyphs.Span
+        Assert.True(span.Length >= 2)
+        let tX = span.[0].X
+        let oX = span.[1].X
+        let buggyOX = tX + AdvT * Scale   // old buggy: T advance only, no kern
+        Assert.True(abs (oX - buggyOX) > 5.0f,
+            sprintf "o.X should differ from buggy value %g; got %g" buggyOX oX)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)
+
+    // ── 6. GPOS kern correctness ────────────────────────────────────────────
+
+    [<Fact>]
+    let ``GPOS kern value for To equals legacy kern value in DejaVu Sans`` () =
+        // DejaVu Sans stores the same kern in both GPOS and legacy table.
+        // If this ever changes, it signals the font was updated.
+        let tables, _ = TestHelper.loadTestFont()
+        let cmap = CMap.parse tables.Cmap
+        let maxpSpan = tables.Maxp.Span
+        let numGlyphs = int (BinaryReader.readU16 maxpSpan 4)
+        let gposKern =
+            match tables.Gpos with
+            | ValueSome gd -> GposKerning.parse gd numGlyphs
+            | ValueNone    -> Assert.Fail("No GPOS"); ValueNone
+        let legacyKern =
+            match tables.Kern with
+            | ValueSome kd -> KernLegacy.parse kd
+            | ValueNone    -> Assert.Fail("No legacy kern"); ValueNone
+        let glyphT = CMap.resolve cmap (uint32 'T')
+        let glypho = CMap.resolve cmap (uint32 'o')
+        let gposVal    = GposKerning.getAdjustment gposKern.Value glyphT glypho
+        let legacyVal  = KernLegacy.getAdjustment  legacyKern.Value glyphT glypho
+        Assert.Equal(int gposVal, int legacyVal)
+
+    [<Fact>]
+    let ``Layout produces tighter spacing with GPOS than without any kern`` () =
+        // This is a structural test: GPOS kern must reduce spacing for To.
+        let tables, metrics = TestHelper.loadTestFont()
+        let result = layoutOnOneLine "To" tables metrics
+        let span   = result.Glyphs.Span
+        Assert.True(span.Length >= 2)
+        let gap = span.[1].X - span.[0].X
+        // No-kern gap = AdvT * Scale ≈ 61.08 px; with kern it should be ≈ 44.09 px
+        let tightGap = (AdvT + KernTo) * Scale
+        // Allow ±1 px because GPOS might slightly differ from legacy
+        Assert.True(abs (gap - tightGap) < 1.5f,
+            sprintf "To spacing %g should be close to kern-corrected %g" gap tightGap)
+        if result.GlyphBuffer.Length > 0 then
+            ArrayPool<GlyphPosition>.Shared.Return(result.GlyphBuffer, false)

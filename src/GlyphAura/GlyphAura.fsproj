@@ -5,9 +5,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <!-- NuGet package metadata -->
-    <PackageId>GlyphAuro</PackageId>
+    <PackageId>GlyphAura</PackageId>
     <Version>0.3.0</Version>
-    <Title>GlyphAuro — F# OpenType Shaping &amp; SDF Layout Engine</Title>
+    <Title>GlyphAura — F# OpenType Shaping &amp; SDF Layout Engine</Title>
     <Description>
       Zero-alloc OpenType text shaping and SDF layout engine for F#.
       Targets Wasm-GC backends. Parses cmap/hmtx/kern/GPOS, shapes Latin text,

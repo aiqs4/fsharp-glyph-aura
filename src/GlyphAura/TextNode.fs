@@ -1,11 +1,11 @@
-namespace GlyphAuro
+namespace GlyphAura
 
 open System
 open System.Numerics
-open GlyphAuro.Shapes
-open GlyphAuro.DrawList
-open GlyphAuro.ShapeCache
-open GlyphAuro.LayoutEngine
+open GlyphAura.Shapes
+open GlyphAura.DrawList
+open GlyphAura.ShapeCache
+open GlyphAura.LayoutEngine
 
 /// TextNode — the primary interactive SceneGraph entity.
 /// Manages dirty flags, caching, hit-testing, and caret geometry.

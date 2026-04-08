@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\GlyphAuro\GlyphAuro.fsproj" />
+    <ProjectReference Include="..\..\src\GlyphAura\GlyphAura.fsproj" />
   </ItemGroup>
 
 </Project>

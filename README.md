@@ -1,12 +1,12 @@
-# GlyphAuro
+# GlyphAura
 
 **Zero-alloc F# OpenType shaping & SDF layout engine — built for Wasm-GC.**
 
 [![CI](https://github.com/aiqs4/fsharp-glyph-auro/actions/workflows/ci.yml/badge.svg)](https://github.com/aiqs4/fsharp-glyph-auro/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/v/GlyphAuro.svg)](https://www.nuget.org/packages/GlyphAuro)
+[![NuGet](https://img.shields.io/nuget/v/GlyphAura.svg)](https://www.nuget.org/packages/GlyphAura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-GlyphAuro is a self-contained F# library that reads a `.ttf` or `.otf` file and
+GlyphAura is a self-contained F# library that reads a `.ttf` or `.otf` file and
 produces positioned `GlyphPosition` arrays ready for a renderer — with zero heap
 allocations in the hot path. It is the **typesetting back-end** you drop into any
 SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
@@ -37,16 +37,16 @@ SceneGraph that speaks `uint16[]` glyph IDs and `float32[]` positions.
 ## Quick Start
 
 ```bash
-dotnet add package GlyphAuro
+dotnet add package GlyphAura
 ```
 
 ```fsharp
 open System
 open System.IO
-open GlyphAuro
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
+open GlyphAura
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
 
 // 1. Load font (zero-copy — bytes stay in memory, all tables are slices)
 let bytes = File.ReadAllBytes("DejaVuSans.ttf")
@@ -81,7 +81,7 @@ printfn "%d glyphs placed" dl.GlyphCount
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                           GlyphAuro library                            │
+│                           GlyphAura library                            │
 │                                                                        │
 │  BinaryReader ─► FontProvider ─► CMap / Hmtx / KernLegacy / Gpos      │
 │                                         │                              │
@@ -105,7 +105,7 @@ printfn "%d glyphs placed" dl.GlyphCount
 
 ## Demo — Rendering Outputs
 
-Running `dotnet run --project demo/GlyphAuro.Demo` produces live renders in three
+Running `dotnet run --project demo/GlyphAura.Demo` produces live renders in three
 formats: **ASCII art** (terminal), **PNG** (SkiaSharp bitmap), and **SVG** (vector).
 All rendered output is saved to `demo/output/`.
 
@@ -174,7 +174,7 @@ is now anchored to each row's actual baseline Y from the layout engine.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│  Circle r=150 (Fit) — Hello, World! GlyphAuro (14px, Fit)                  │
+│  Circle r=150 (Fit) — Hello, World! GlyphAura (14px, Fit)                  │
 └────────────────────────────────────────────────────────────────────────────┘
   Glyphs placed  : 19 / 23 source chars
   Font size used : 64.8 px   ← binary-searched to fill the circle
@@ -270,7 +270,7 @@ T h e·q u c k b ro w n ·o x ju m  ps o v er·th e ·a zy  |
 
 ## SceneGraph Integration
 
-GlyphAuro is designed to be the *typesetting back-end* of a separate SceneGraph
+GlyphAura is designed to be the *typesetting back-end* of a separate SceneGraph
 library. The contract is:
 
 ```fsharp
@@ -296,10 +296,10 @@ zero-copy transfer over the Wasm/JS boundary.
 dotnet build
 
 # Run tests
-dotnet test tests/GlyphAuro.Tests/GlyphAuro.Tests.fsproj --verbosity normal
+dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 
 # Run demo
-dotnet run --project demo/GlyphAuro.Demo/GlyphAuro.Demo.fsproj
+dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 ```
 
 Requirements: **.NET 10 SDK**. The library also targets **net8.0** for

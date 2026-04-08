@@ -1,19 +1,19 @@
-/// GlyphAuro SVG Demo — renders glyph positions and SDF shape outlines to SVG.
+/// GlyphAura SVG Demo — renders glyph positions and SDF shape outlines to SVG.
 ///
 /// Produces vector output that demonstrates:
 ///   • Correct glyph x/y coordinates from the layout engine
 ///   • Shape boundary overlay (circle, diamond, triangle, parallelogram)
 ///   • Baseline indicator lines
 ///   • Kerning quality tests ("VA", "Te" at large scale)
-module GlyphAuro.Demo.SvgDemo
+module GlyphAura.Demo.SvgDemo
 
 open System
 open System.IO
 open System.Text
-open GlyphAuro
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
+open GlyphAura
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
 
 // ── Colour palette ─────────────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ let runAll
         path
 
     let pangram = "The quick brown fox jumps over the lazy dog."
-    let hello   = "Hello, World! GlyphAuro"
+    let hello   = "Hello, World! GlyphAura"
 
     let runScene (shape: ISdfShape) (text: string) (fontSize: float32) (mode: LayoutMode) (title: string) =
         let req = {

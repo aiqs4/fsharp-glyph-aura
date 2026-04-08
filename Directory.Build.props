@@ -3,7 +3,7 @@
     <!-- Shared NuGet / build metadata for all projects -->
     <Authors>Glyph-Auro Contributors</Authors>
     <Company>Glyph-Auro</Company>
-    <Product>GlyphAuro</Product>
+    <Product>GlyphAura</Product>
     <Copyright>Copyright © 2025 Glyph-Auro Contributors</Copyright>
     <RepositoryUrl>https://github.com/aiqs4/fsharp-glyph-auro</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

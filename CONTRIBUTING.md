@@ -22,19 +22,19 @@ git clone https://github.com/aiqs4/fsharp-glyph-auro.git
 cd fsharp-glyph-auro
 
 dotnet build
-dotnet test tests/GlyphAuro.Tests/GlyphAuro.Tests.fsproj --verbosity normal
+dotnet test tests/GlyphAura.Tests/GlyphAura.Tests.fsproj --verbosity normal
 ```
 
 Run the demo:
 
 ```bash
-dotnet run --project demo/GlyphAuro.Demo/GlyphAuro.Demo.fsproj
+dotnet run --project demo/GlyphAura.Demo/GlyphAura.Demo.fsproj
 ```
 
 ## Project Structure
 
 ```
-src/GlyphAuro/          — Library (GlyphAuro.dll / NuGet package)
+src/GlyphAura/          — Library (GlyphAura.dll / NuGet package)
   BinaryReader.fs       — Zero-alloc big-endian reads
   Types.fs              — Core value types (ShapedGlyph, FontMetrics, …)
   FontProvider.fs       — OpenType table directory parser
@@ -51,8 +51,8 @@ src/GlyphAuro/          — Library (GlyphAuro.dll / NuGet package)
   ShapeCache.fs         — LRU layout cache
   TextNode.fs           — Full interactive SceneGraph entity
 
-tests/GlyphAuro.Tests/  — xUnit test suite (121 tests)
-demo/GlyphAuro.Demo/    — Console ASCII-art rendering demo
+tests/GlyphAura.Tests/  — xUnit test suite (121 tests)
+demo/GlyphAura.Demo/    — Console ASCII-art rendering demo
 ```
 
 ## Coding Conventions
@@ -62,7 +62,7 @@ demo/GlyphAuro.Demo/    — Console ASCII-art rendering demo
 - **All public functions return `Result<_, string>` or `voption`.** No exceptions in public API.
 - **Prefer struct discriminated unions** (`[<Struct>]`) for high-frequency types.
 - **Tests before merge.** Every new feature needs at least one test.
-- Follow the existing module compilation order in `GlyphAuro.fsproj`.
+- Follow the existing module compilation order in `GlyphAura.fsproj`.
 
 ## Pull Request Process
 

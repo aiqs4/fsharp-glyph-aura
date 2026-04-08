@@ -1,9 +1,16 @@
-namespace GlyphAuro
+namespace GlyphAura
 
 open System
 
 /// Simple Latin shaper (Mode A). Resolves characters through cmap → GlyphID,
-/// applies advance widths and legacy kern adjustments, returns ShapedGlyph[].
+/// applies advance widths and kerning adjustments, returns ShapedGlyph[].
+///
+/// Kerning convention (matches HarfBuzz / OpenType spec):
+///   XAdvance[i] = base_advance[i] + kern(glyph[i], glyph[i+1])
+///
+/// This "look-ahead" design means the kern adjustment is baked into the LEFT
+/// glyph's advance, so the pen position after placing glyph[i] already accounts
+/// for the pair adjustment and glyph[i+1]'s origin is simply the current pen.
 module Shaper =
 
     /// Shape a line of text with optional width constraint.
@@ -26,21 +33,30 @@ module Shaper =
 
         let mutable outIdx = 0
         let mutable totalAdvance = 0.0f
-        let mutable prevGlyphId = 0us
         let mutable lastFitIndex = -1
         let mutable exceeded = false
         let maxGlyphs = min text.Length buffer.Length
 
+        // First pass: resolve all glyph IDs so we can look ahead for kern
+        let glyphIds = Array.zeroCreate<uint16> (min text.Length maxGlyphs)
+        let mutable resolvedCount = 0
         for i in 0 .. text.Length - 1 do
-            if not exceeded then
-                let codepoint = uint32 text.[i]
-                let glyphId = CMap.resolve cmap codepoint
-                let metrics = Hmtx.getMetrics hmtx glyphId
+            if i < maxGlyphs then
+                glyphIds.[i] <- CMap.resolve cmap (uint32 text.[i])
+                resolvedCount <- i + 1
 
-                // Apply kerning adjustment from previous glyph
+        for i in 0 .. resolvedCount - 1 do
+            if not exceeded then
+                let glyphId  = glyphIds.[i]
+                let metrics  = Hmtx.getMetrics hmtx glyphId
+
+                // Look-ahead kern: kern(current → next), applied to CURRENT glyph's advance.
+                // This is the OpenType / HarfBuzz convention: the LEFT glyph's advance
+                // is shortened (or lengthened) by the pair-kern so that the RIGHT glyph's
+                // origin is simply the current pen position after this advance.
                 let kernAdj =
-                    if outIdx > 0 then
-                        float32 (KernLegacy.getAdjustmentOpt kern prevGlyphId glyphId)
+                    if i + 1 < resolvedCount then
+                        float32 (KernLegacy.getAdjustmentOpt kern glyphId glyphIds.[i + 1])
                     else
                         0.0f
 
@@ -56,12 +72,11 @@ module Shaper =
                     buffer.[outIdx] <- {
                         GlyphId = glyphId
                         ClusterIndex = i
-                        XAdvance = metrics.AdvanceWidth + kernAdj
-                        XOffset = 0.0f
-                        YOffset = 0.0f
+                        XAdvance = metrics.AdvanceWidth + kernAdj   // design units, kern to next
+                        XOffset  = 0.0f
+                        YOffset  = 0.0f
                     }
                     totalAdvance <- totalAdvance + advance
-                    prevGlyphId <- glyphId
                     outIdx <- outIdx + 1
 
         {

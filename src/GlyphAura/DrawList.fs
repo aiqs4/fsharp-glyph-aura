@@ -1,9 +1,9 @@
-namespace GlyphAuro
+namespace GlyphAura
 
 open System
 open System.Buffers
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
 
 /// TextRun Output Format + DrawList.
 /// Canonical output contract between Glyph-Auro and any SceneGraph consumer.

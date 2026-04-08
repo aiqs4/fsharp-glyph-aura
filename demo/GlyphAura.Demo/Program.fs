@@ -1,21 +1,21 @@
-/// GlyphAuro Demo — ASCII-art rendering of text in SDF shapes.
+/// GlyphAura Demo — ASCII-art rendering of text in SDF shapes.
 ///
 /// This demo shows the full pipeline:
 ///   font file → parse → shape → SDF layout → glyph positions → ASCII canvas
 ///
 /// Each glyph is represented by its character on an ASCII canvas.
 /// The shape boundary is drawn with '#' to visualise the SDF region.
-module GlyphAuro.Demo.Program
+module GlyphAura.Demo.Program
 
 open System
 open System.IO
 open System.Buffers
-open GlyphAuro
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
-open GlyphAuro.ShapeCache
-open GlyphAuro.TextNode
+open GlyphAura
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
+open GlyphAura.ShapeCache
+open GlyphAura.TextNode
 
 // ── Canvas helpers ─────────────────────────────────────────────────────────
 
@@ -197,7 +197,7 @@ let main _ =
         printfn ""
 
         let pangram = "The quick brown fox jumps over the lazy dog."
-        let helloWorld = "Hello, World! GlyphAuro"
+        let helloWorld = "Hello, World! GlyphAura"
         let shortText = "Glyph"
 
         // ── Scene 1: Circle, Flow mode ────────────────────────────────────
@@ -224,7 +224,7 @@ let main _ =
 
         // ── Scene 7: PNG renders ──────────────────────────────────────
         printBanner "PNG Renders (SkiaSharp)"
-        // Go 5 levels up from net10.0/bin/Release/GlyphAuro.Demo/demo → repo root
+        // Go 5 levels up from net10.0/bin/Release/GlyphAura.Demo/demo → repo root
         let outDir =
             Path.GetFullPath(
                 Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "demo", "output"))

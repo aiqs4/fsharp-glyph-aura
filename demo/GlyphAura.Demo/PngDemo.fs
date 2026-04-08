@@ -1,4 +1,4 @@
-/// GlyphAuro PNG Demo — renders glyph positions and SDF shapes to bitmaps via SkiaSharp.
+/// GlyphAura PNG Demo — renders glyph positions and SDF shapes to bitmaps via SkiaSharp.
 ///
 /// Produces raster output that demonstrates:
 ///   • Pixel-perfect glyph placement from the layout engine
@@ -6,16 +6,16 @@
 ///   • Baseline indicator lines (green dashes)
 ///   • Cap-height band (translucent)
 ///   • Kerning quality test at large scale
-module GlyphAuro.Demo.PngDemo
+module GlyphAura.Demo.PngDemo
 
 open System
 open System.IO
 open System.Buffers
 open SkiaSharp
-open GlyphAuro
-open GlyphAuro.Shapes
-open GlyphAuro.LayoutEngine
-open GlyphAuro.DrawList
+open GlyphAura
+open GlyphAura.Shapes
+open GlyphAura.LayoutEngine
+open GlyphAura.DrawList
 
 // ── Colour palette ─────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ let private renderScene
     // Caption
     use captionFont  = new SKFont(SKTypeface.FromFamilyName("monospace"), 10.0f)
     use captionPaint = new SKPaint(Color = SKColor(100uy, 100uy, 100uy), IsAntialias = true)
-    let caption = sprintf "GlyphAuro | %d glyphs | %.1fpx | %A" dl.GlyphCount result.FontSizeUsed mode
+    let caption = sprintf "GlyphAura | %d glyphs | %.1fpx | %A" dl.GlyphCount result.FontSizeUsed mode
     canvas.DrawText(caption, 6.0f, float32 h - 5.0f, SKTextAlign.Left, captionFont, captionPaint)
 
     use image  = surface.Snapshot()
@@ -268,7 +268,7 @@ let runAll
 
     let typeface = loadTypeface()
     let pangram  = "The quick brown fox jumps over the lazy dog."
-    let hello    = "Hello, World! GlyphAuro"
+    let hello    = "Hello, World! GlyphAura"
     let out name = Path.Combine(outDir, name)
 
     let p1 = renderScene tables metrics

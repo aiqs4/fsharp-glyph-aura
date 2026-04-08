@@ -1,9 +1,9 @@
-namespace GlyphAuro
+namespace GlyphAura
 
 open System
 open System.Buffers
-open GlyphAuro.Shapes
-open GlyphAuro.GposKerning
+open GlyphAura.Shapes
+open GlyphAura.GposKerning
 
 /// Fused Streaming Layout Engine.
 /// Interleaves shaping and layout in a single streaming loop.
@@ -105,6 +105,22 @@ module LayoutEngine =
             let mutable charsConsumed = 0
             let mutable glyphsPlaced = 0
 
+            /// Compute corrected pixel advance for glyph[i] when GPOS is available.
+            /// The shaper baked legacy kern(i → i+1) into XAdvance[i]; if GPOS provides
+            /// a different value for that pair, substitute it.
+            let correctedAdvance (i: int) (count: int) : float32 =
+                if i + 1 < count then
+                    let leftId  = shapeBuf.[i].GlyphId
+                    let rightId = shapeBuf.[i + 1].GlyphId
+                    match fd.GposKern with
+                    | ValueSome _ ->
+                        let gposAdj    = getKernAdjustment fd leftId rightId
+                        let legacyAdj  = float32 (KernLegacy.getAdjustmentOpt fd.KernLegacy leftId rightId)
+                        shapeBuf.[i].XAdvance * scale + (gposAdj - legacyAdj) * scale
+                    | ValueNone -> shapeBuf.[i].XAdvance * scale
+                else
+                    shapeBuf.[i].XAdvance * scale
+
             if result.LastFitIndex >= 0 then
                 // Width exceeded — find word boundary
                 let lastFit = result.LastFitIndex
@@ -122,21 +138,10 @@ module LayoutEngine =
                 for i in 0 .. min (breakIdx - 1) (result.GlyphCount - 1) do
                     if outIdx + glyphsPlaced < buffer.Length then
                         let g = shapeBuf.[i]
-                        // Apply GPOS kerning adjustment (overrides legacy kern)
-                        let kernAdj =
-                            if i > 0 then
-                                let prevId = shapeBuf.[i - 1].GlyphId
-                                let gposAdj = getKernAdjustment fd prevId g.GlyphId
-                                // Legacy kern was already included in XAdvance by shaper;
-                                // if GPOS provides a value, use the difference
-                                match fd.GposKern with
-                                | ValueSome _ ->
-                                    let legacyAdj = float32 (KernLegacy.getAdjustmentOpt fd.KernLegacy prevId g.GlyphId)
-                                    (gposAdj - legacyAdj) * scale
-                                | ValueNone -> 0.0f
-                            else 0.0f
-                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x + kernAdj; Y = y }
-                        x <- x + g.XAdvance * scale + kernAdj
+                        // Glyph origin is simply the current pen position.
+                        // (kern to the next glyph is already included in the advance.)
+                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y }
+                        x <- x + correctedAdvance i (min breakIdx result.GlyphCount)
                         glyphsPlaced <- glyphsPlaced + 1
 
                 // Skip whitespace after break
@@ -149,18 +154,9 @@ module LayoutEngine =
                 for i in 0 .. result.GlyphCount - 1 do
                     if outIdx + glyphsPlaced < buffer.Length then
                         let g = shapeBuf.[i]
-                        let kernAdj =
-                            if i > 0 then
-                                let prevId = shapeBuf.[i - 1].GlyphId
-                                match fd.GposKern with
-                                | ValueSome _ ->
-                                    let gposAdj = getKernAdjustment fd prevId g.GlyphId
-                                    let legacyAdj = float32 (KernLegacy.getAdjustmentOpt fd.KernLegacy prevId g.GlyphId)
-                                    (gposAdj - legacyAdj) * scale
-                                | ValueNone -> 0.0f
-                            else 0.0f
-                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x + kernAdj; Y = y }
-                        x <- x + g.XAdvance * scale + kernAdj
+                        // Glyph origin is simply the current pen position.
+                        buffer.[outIdx + glyphsPlaced] <- { GlyphId = g.GlyphId; X = x; Y = y }
+                        x <- x + correctedAdvance i result.GlyphCount
                         glyphsPlaced <- glyphsPlaced + 1
                 charsConsumed <- text.Length
 
